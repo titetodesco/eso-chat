@@ -28,7 +28,9 @@ Em App → Settings → Secrets, cole:
 OLLAMA_API_KEY = "coloque_sua_api_key_aqui"
 
 # Opcionais (deixe assim se usar o Ollama Cloud)
-OLLAMA_HOST  = "https://api.ollama.com"
+
+OLLAMA_HOST  = "https://api.ollama.com" 
+
 OLLAMA_MODEL = "llama3.1"    # ou outro modelo disponível no Ollama Cloud
 
 Salve os secrets.
