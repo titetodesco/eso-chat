@@ -1,97 +1,48 @@
 # app_chat.py
-# ESO • CHAT com Ollama Cloud (preview) + fallback TF-IDF local
-# - Chat:  POST https://ollama.com/api/chat
-# - Embed: POST https://ollama.com/api/embed  (se falhar -> TF-IDF local)
-# - Sem torch / sentence-transformers
+# Chat RAG + Detecções (WS / Precursores / CP) com FastEmbed (sem torch)
+# - Chat: Ollama Cloud (https://ollama.com/api/chat) com API key
+# - Embeddings: FastEmbed local (consistente com arquivos gerados pelo make_embeddings_fast.py)
 
 import os
 import io
-import re
 import json
+import time
 import math
 import requests
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="ESO • CHAT (Ollama Cloud)", page_icon="💬", layout="wide")
-
-# -------------------------
-# Secrets / ENV
-# -------------------------
-OLLAMA_HOST        = st.secrets.get("OLLAMA_HOST", os.getenv("OLLAMA_HOST", "https://ollama.com"))
-OLLAMA_API_KEY     = st.secrets.get("OLLAMA_API_KEY", os.getenv("OLLAMA_API_KEY", None))
-OLLAMA_MODEL       = st.secrets.get("OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "gpt-oss:20b"))
-OLLAMA_EMBED_MODEL = st.secrets.get("OLLAMA_EMBED_MODEL", os.getenv("OLLAMA_EMBED_MODEL", "all-minilm"))
-
-if not OLLAMA_API_KEY:
-    st.error("⚠️ OLLAMA_API_KEY não encontrado em Settings → Secrets.")
-    st.stop()
-
-HEADERS_JSON     = {"Authorization": f"Bearer {OLLAMA_API_KEY}", "Content-Type": "application/json"}
-HEADERS_JSON_RAW = {"Authorization": f"{OLLAMA_API_KEY}", "Content-Type": "application/json"}  # fallback se o provedor não exigir 'Bearer'
-
-# -------------------------
-# Parsers simples
-# -------------------------
+# --------- Leitores leves ----------
 try:
     import pypdf
 except Exception:
     pypdf = None
-
 try:
     import docx
 except Exception:
     docx = None
 
-def read_pdf(file_bytes: bytes) -> str:
-    if pypdf is None:
-        raise RuntimeError("pypdf não instalado (adicione 'pypdf' no requirements.txt).")
-    r = pypdf.PdfReader(io.BytesIO(file_bytes))
-    out = []
-    for pg in r.pages:
-        try:
-            out.append(pg.extract_text() or "")
-        except Exception:
-            pass
-    return "\n".join(out)
-
-def read_docx(file_bytes: bytes) -> str:
-    if docx is None:
-        raise RuntimeError("python-docx não instalado (adicione 'python-docx' no requirements.txt).")
-    d = docx.Document(io.BytesIO(file_bytes))
-    return "\n".join(p.text for p in d.paragraphs)
-
-def read_xlsx(file_bytes: bytes) -> str:
-    xls = pd.ExcelFile(io.BytesIO(file_bytes))
-    frames = []
-    for sheet in xls.sheet_names:
-        df = xls.parse(sheet)
-        frames.append(df.astype(str))
-    return pd.concat(frames, axis=0, ignore_index=True).to_csv(index=False) if frames else ""
-
-def read_csv(file_bytes: bytes) -> str:
-    df = pd.read_csv(io.BytesIO(file_bytes))
-    return df.astype(str).to_csv(index=False)
-
-def load_file_to_text(uf) -> str:
-    name = uf.name.lower()
-    data = uf.read()
-    if name.endswith(".pdf"):
-        return read_pdf(data)
-    if name.endswith(".docx"):
-        return read_docx(data)
-    if name.endswith(".xlsx") or name.endswith(".xls"):
-        return read_xlsx(data)
-    if name.endswith(".csv"):
-        return read_csv(data)
-    try:
-        return data.decode("utf-8", errors="ignore")
-    except Exception:
-        return ""
+# --------- FastEmbed (ONNX, sem torch) ----------
+from fastembed import TextEmbedding
 
 # -------------------------
-# RAG helpers
+# Configurações básicas
+# -------------------------
+st.set_page_config(page_title="ESO • CHAT (FastEmbed + Ollama Cloud)", page_icon="💬", layout="wide")
+
+# Segredos (chat) — embeddings são locais com FastEmbed
+OLLAMA_HOST    = st.secrets.get("OLLAMA_HOST", os.getenv("OLLAMA_HOST", "https://ollama.com"))
+OLLAMA_MODEL   = st.secrets.get("OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "gpt-oss:120b"))
+OLLAMA_API_KEY = st.secrets.get("OLLAMA_API_KEY", os.getenv("OLLAMA_API_KEY", None))
+
+HEADERS_JSON = {"Authorization": f"Bearer {OLLAMA_API_KEY}", "Content-Type": "application/json"} if OLLAMA_API_KEY else None
+
+# Nome do modelo de embedding (deve bater com o make_embeddings_fast.py)
+EMB_MODEL = os.getenv("EMB_MODEL", "BAAI/bge-small-en-v1.5")
+
+# -------------------------
+# Utils
 # -------------------------
 def chunk_text(text: str, max_chars: int = 1200, overlap: int = 200):
     if not text:
@@ -107,6 +58,54 @@ def chunk_text(text: str, max_chars: int = 1200, overlap: int = 200):
         start = max(0, end - overlap)
     return [p for p in parts if p]
 
+def read_pdf(b: bytes) -> str:
+    if pypdf is None:
+        raise RuntimeError("pypdf não está instalado. Adicione `pypdf` ao requirements.txt.")
+    reader = pypdf.PdfReader(io.BytesIO(b))
+    txt = []
+    for page in reader.pages:
+        try:
+            txt.append(page.extract_text() or "")
+        except Exception:
+            pass
+    return "\n".join(txt)
+
+def read_docx(b: bytes) -> str:
+    if docx is None:
+        raise RuntimeError("python-docx não está instalado. Adicione `python-docx` ao requirements.txt.")
+    d = docx.Document(io.BytesIO(b))
+    return "\n".join(p.text for p in d.paragraphs)
+
+def read_xlsx(b: bytes) -> str:
+    xls = pd.ExcelFile(io.BytesIO(b))
+    frames = []
+    for sh in xls.sheet_names:
+        df = xls.parse(sh)
+        frames.append(df.astype(str))
+    if frames:
+        return pd.concat(frames, axis=0, ignore_index=True).to_csv(index=False)
+    return ""
+
+def read_csv(b: bytes) -> str:
+    df = pd.read_csv(io.BytesIO(b))
+    return df.astype(str).to_csv(index=False)
+
+def load_file_to_text(uf) -> str:
+    name = uf.name.lower()
+    data = uf.read()
+    if name.endswith(".pdf"):
+        return read_pdf(data)
+    if name.endswith(".docx"):
+        return read_docx(data)
+    if name.endswith((".xlsx", ".xls")):
+        return read_xlsx(data)
+    if name.endswith(".csv"):
+        return read_csv(data)
+    try:
+        return data.decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
 def cosine_sim(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     a = np.asarray(a, dtype=np.float32)
     b = np.asarray(b, dtype=np.float32)
@@ -118,103 +117,98 @@ def cosine_sim(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     b_norm = np.linalg.norm(b, axis=1, keepdims=True) + 1e-9
     return (a @ b.T) / (a_norm * b_norm)
 
-# -------- TF-IDF (local, leve) --------
-WORD_RE = re.compile(r"[A-Za-zÀ-ÿ0-9_’-]+")
+def ensure_embedder(model_name: str):
+    if "embedder" not in st.session_state:
+        st.session_state.embedder = TextEmbedding(model_name=model_name)
+    return st.session_state.embedder
 
-def tokenize(s: str):
-    return [t.lower() for t in WORD_RE.findall(s or "")]
-
-def build_tfidf(chunks: list[str]):
-    # vocabulário
-    N = len(chunks)
-    df = {}  # doc freq
-    docs_tokens = []
-    for txt in chunks:
-        toks = tokenize(txt)
-        docs_tokens.append(toks)
-        for w in set(toks):
-            df[w] = df.get(w, 0) + 1
-    # idf
-    idf = {w: math.log((N + 1) / (df[w] + 1)) + 1.0 for w in df}
-    vocab = {w:i for i, w in enumerate(sorted(idf))}
-    D = len(vocab)
-
-    # tf-idf matrizes esparsas (como dict word_id -> val), mas guardamos densas por simplicidade
-    X = np.zeros((N, D), dtype=np.float32)
-    for i, toks in enumerate(docs_tokens):
-        if not toks: continue
-        tf = {}
-        for w in toks:
-            if w in vocab:
-                tf[w] = tf.get(w, 0) + 1
-        L = len(toks)
-        for w, cnt in tf.items():
-            j = vocab[w]
-            X[i, j] = (cnt / L) * idf[w]
-    # normaliza linhas
-    norms = np.linalg.norm(X, axis=1, keepdims=True) + 1e-9
-    X = X / norms
-    return {"vocab": vocab, "idf": idf, "X": X}
-
-def tfidf_query_vector(q: str, model: dict):
-    vocab, idf = model["vocab"], model["idf"]
-    toks = tokenize(q)
-    if not toks:
-        return np.zeros((1, len(vocab)), dtype=np.float32)
-    tf = {}
-    for w in toks:
-        if w in vocab:
-            tf[w] = tf.get(w, 0) + 1
-    L = max(1, len(toks))
-    v = np.zeros((1, len(vocab)), dtype=np.float32)
-    for w, cnt in tf.items():
-        j = vocab[w]
-        v[0, j] = (cnt / L) * idf.get(w, 1.0)
-    n = np.linalg.norm(v, axis=1, keepdims=True) + 1e-9
-    return v / n
+def embed_texts(texts, model_name: str):
+    """Embeddings com FastEmbed (sem torch)."""
+    embedder = ensure_embedder(model_name)
+    # FastEmbed retorna um iterável de vetores
+    vecs = list(embedder.embed(texts))
+    return np.array(vecs, dtype=np.float32)
 
 # -------------------------
-# Cloud API wrappers
+# Carregamento de analytics (gerados pelo make)
 # -------------------------
-def _post_json(url: str, payload: dict, timeout: int = 120):
-    r = requests.post(url, headers=HEADERS_JSON, json=payload, timeout=timeout)
-    if r.status_code in (401, 403):  # tenta sem 'Bearer'
-        r2 = requests.post(url, headers=HEADERS_JSON_RAW, json=payload, timeout=timeout)
-        r2.raise_for_status()
-        return r2
-    r.raise_for_status()
-    return r
+def load_jsonl(path: str):
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line: continue
+            rows.append(json.loads(line))
+    return rows
 
-def ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False, timeout=120):
-    payload = {"model": model, "messages": messages, "temperature": float(temperature), "stream": bool(stream)}
-    r = _post_json(f"{OLLAMA_HOST}/api/chat", payload, timeout=timeout)
-    return r.json() if not stream else r.iter_lines()
+def load_vectors(path_npz: str) -> np.ndarray:
+    with np.load(path_npz, allow_pickle=False) as npz:
+        if "vectors" in npz.files:
+            return np.array(npz["vectors"], dtype=np.float32)
+        # fallback defensivo
+        key = npz.files[0]
+        return np.array(npz[key], dtype=np.float32)
 
-def ollama_embed(texts, model=OLLAMA_EMBED_MODEL, timeout=120):
-    """Usa /api/embed; se 4xx ou 5xx, relança para ser capturado e ativar TF-IDF."""
-    if isinstance(texts, str):
-        texts = [texts]
-    payload = {"model": model, "input": texts}
-    r = _post_json(f"{OLLAMA_HOST}/api/embed", payload, timeout=timeout)
-    data = r.json()
-    if "embeddings" in data and isinstance(data["embeddings"], list):
-        return data["embeddings"]
-    if "embedding" in data and isinstance(data["embedding"], list):
-        return [data["embedding"]]
-    raise RuntimeError("Resposta inesperada de /api/embed: " + json.dumps(data)[:300])
+@st.cache_data(show_spinner=False)
+def load_analytics():
+    base = "data/analytics"
+    data = {}
+
+    # WS
+    ws_labels_path = os.path.join(base, "ws_labels.jsonl")
+    ws_vecs_path   = os.path.join(base, "ws_vectors.npz")
+    if os.path.exists(ws_labels_path) and os.path.exists(ws_vecs_path):
+        data["ws_labels"] = load_jsonl(ws_labels_path)  # [{label, ...}]
+        data["ws_vecs"]   = load_vectors(ws_vecs_path)
+    else:
+        data["ws_labels"], data["ws_vecs"] = [], np.zeros((0, 384), dtype=np.float32)
+
+    # Precursores
+    prec_labels_path = os.path.join(base, "prec_labels.jsonl")
+    prec_vecs_path   = os.path.join(base, "prec_vectors.npz")
+    if os.path.exists(prec_labels_path) and os.path.exists(prec_vecs_path):
+        data["prec_labels"] = load_jsonl(prec_labels_path)
+        data["prec_vecs"]   = load_vectors(prec_vecs_path)
+    else:
+        data["prec_labels"], data["prec_vecs"] = [], np.zeros((0, 384), dtype=np.float32)
+
+    # Taxonomia CP
+    cp_labels_path = os.path.join(base, "cp_labels.jsonl")
+    cp_vecs_path   = os.path.join(base, "cp_vectors.npz")
+    if os.path.exists(cp_labels_path) and os.path.exists(cp_vecs_path):
+        data["cp_labels"] = load_jsonl(cp_labels_path)
+        data["cp_vecs"]   = load_vectors(cp_vecs_path)
+    else:
+        data["cp_labels"], data["cp_vecs"] = [], np.zeros((0, 384), dtype=np.float32)
+
+    # Histórico (opcional)
+    hist_txt_path = os.path.join(base, "history_texts.jsonl")
+    hist_vec_path = os.path.join(base, "history_vectors.npz")
+    if os.path.exists(hist_txt_path) and os.path.exists(hist_vec_path):
+        data["hist_texts"] = load_jsonl(hist_txt_path)  # [{id, source, text, meta}]
+        data["hist_vecs"]  = load_vectors(hist_vec_path)
+    else:
+        data["hist_texts"], data["hist_vecs"] = [], np.zeros((0, 384), dtype=np.float32)
+
+    # Arestas WS-Precursor (opcional)
+    edges_path = os.path.join(base, "edges_ws_prec.csv")
+    if os.path.exists(edges_path):
+        try:
+            data["edges"] = pd.read_csv(edges_path)
+        except Exception:
+            data["edges"] = pd.DataFrame(columns=["ws","precursor","hto"])
+    else:
+        data["edges"] = pd.DataFrame(columns=["ws","precursor","hto"])
+
+    return data
+
+analytics = load_analytics()
 
 # -------------------------
-# Estado
+# Estado do índice de uploads
 # -------------------------
 if "index" not in st.session_state:
-    st.session_state.index = {
-        "chunks": [],
-        "embeddings": None,   # np.ndarray (n, d) quando usar Embeddings
-        "metas": [],
-        "tfidf": None,        # dict quando usar TF-IDF
-        "backend": "auto",    # "embed" | "tfidf" | "auto"
-        "active_backend": None
-    }
+    st.session_state.index = {"chunks": [], "embeddings": None, "metas": []}
 
 if "chat" not in st.session_state:
     st.session_state.chat = []
@@ -223,20 +217,20 @@ if "chat" not in st.session_state:
 # Sidebar
 # -------------------------
 st.sidebar.header("Configurações")
-with st.sidebar.expander("Ollama Cloud", expanded=True):
+st.sidebar.write(f"**Embeddings (local):** `{EMB_MODEL}`")
+with st.sidebar.expander("Ollama Cloud (chat)", expanded=False):
     st.write("Host:", OLLAMA_HOST)
-    st.write("Modelo (chat):", OLLAMA_MODEL)
-    st.write("Modelo (embeddings):", OLLAMA_EMBED_MODEL)
+    st.write("Modelo:", OLLAMA_MODEL)
+    st.write("API key definida:", bool(OLLAMA_API_KEY))
 
 topk = st.sidebar.slider("Top-K contexto (RAG)", 1, 10, 4, 1)
-chunk_size = st.sidebar.slider("Tamanho do chunk", 500, 2000, 1200, 50)
-chunk_overlap = st.sidebar.slider("Overlap", 50, 600, 200, 10)
+chunk_size = st.sidebar.slider("Tamanho do chunk (caracteres)", 500, 2200, 1200, 50)
+chunk_overlap = st.sidebar.slider("Overlap do chunk", 50, 600, 200, 10)
 sim_threshold = st.sidebar.slider("Limiar de similaridade (cos)", 0.10, 0.95, 0.35, 0.01)
-backend_choice = st.sidebar.selectbox("Motor de similaridade", ["Auto", "Embeddings (Cloud)", "TF-IDF (local)"], index=0)
-
 st.sidebar.divider()
+
 uploaded_files = st.sidebar.file_uploader(
-    "Upload base (PDF, DOCX, XLSX, CSV, TXT/MD)",
+    "Upload (PDF, DOCX, XLSX, CSV, TXT/MD)",
     type=["pdf","docx","xlsx","xls","csv","txt","md"],
     accept_multiple_files=True
 )
@@ -244,44 +238,33 @@ uploaded_files = st.sidebar.file_uploader(
 col_a, col_b = st.sidebar.columns(2)
 with col_a:
     if st.button("Limpar índice", use_container_width=True):
-        st.session_state.index = {"chunks": [], "embeddings": None, "metas": [], "tfidf": None, "backend": "auto", "active_backend": None}
+        st.session_state.index = {"chunks": [], "embeddings": None, "metas": []}
 with col_b:
     if st.button("Limpar chat", use_container_width=True):
         st.session_state.chat = []
 
-with st.sidebar.expander("Diagnóstico de conexão", expanded=False):
-    if st.button("Listar modelos (/api/tags)", use_container_width=True):
-        try:
-            r = requests.get(f"{OLLAMA_HOST}/api/tags", headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"}, timeout=30)
-            st.write("Status:", r.status_code)
-            if r.headers.get("content-type","").startswith("application/json"):
-                st.json(r.json())
-            else:
-                st.write(r.text[:1000])
-        except Exception as e:
-            st.error(f"Falhou: {e}")
+# Diagnóstico simples de chat
+with st.sidebar.expander("Diagnóstico /api/chat", expanded=False):
     if st.button("Teste /api/chat", use_container_width=True):
-        try:
-            payload = {"model": OLLAMA_MODEL, "messages":[{"role":"user","content":"diga OK"}], "stream": False}
-            r = _post_json(f"{OLLAMA_HOST}/api/chat", payload, timeout=60)
-            st.write("Status:", r.status_code)
-            st.json(r.json())
-        except Exception as e:
-            st.error(f"Falhou: {e}")
-    if st.button("Teste /api/embed", use_container_width=True):
-        try:
-            payload = {"model": OLLAMA_EMBED_MODEL, "input": ["teste de embedding"]}
-            r = _post_json(f"{OLLAMA_HOST}/api/embed", payload, timeout=60)
-            st.write("Status:", r.status_code)
-            st.json(r.json())
-        except Exception as e:
-            st.error(f"Falhou: {e}")
+        if not OLLAMA_API_KEY:
+            st.error("Defina OLLAMA_API_KEY em Secrets.")
+        else:
+            try:
+                r = requests.post(
+                    f"{OLLAMA_HOST}/api/chat",
+                    headers=HEADERS_JSON,
+                    json={"model": OLLAMA_MODEL, "messages":[{"role":"user","content":"diga OK"}], "stream": False},
+                    timeout=60)
+                st.write("Status:", r.status_code)
+                st.json(r.json())
+            except Exception as e:
+                st.error(f"Falhou: {e}")
 
 # -------------------------
-# Indexação (RAG)
+# Indexação de uploads
 # -------------------------
 if uploaded_files:
-    with st.spinner("Lendo arquivos e preparando índice…"):
+    with st.spinner("Lendo arquivos e gerando embeddings (FastEmbed)…"):
         new_chunks, new_metas = [], []
         for uf in uploaded_files:
             try:
@@ -294,59 +277,51 @@ if uploaded_files:
                 st.warning(f"Falha ao processar {uf.name}: {e}")
 
         if new_chunks:
-            st.session_state.index["chunks"].extend(new_chunks)
-            st.session_state.index["metas"].extend(new_metas)
+            try:
+                embs = embed_texts(new_chunks, EMB_MODEL)
+            except Exception as e:
+                st.error(f"Erro ao gerar embeddings (FastEmbed): {e}")
+                st.stop()
 
-            # Decide backend
-            st.session_state.index["backend"] = {"Auto":"auto","Embeddings (Cloud)":"embed","TF-IDF (local)":"tfidf"}[backend_choice]
-
-            # Tenta embeddings se pedido (ou auto)
-            use_embed = st.session_state.index["backend"] in ("embed","auto")
-            used_embed = False
-            embs = None
-
-            if use_embed:
-                try:
-                    # gera embeddings em lotes
-                    BATCH, all_vecs = 32, []
-                    for i in range(0, len(new_chunks), BATCH):
-                        batch = new_chunks[i:i+BATCH]
-                        vecs = ollama_embed(batch, model=OLLAMA_EMBED_MODEL, timeout=120)
-                        all_vecs.extend(vecs)
-                    embs = np.array(all_vecs, dtype=np.float32)
-                    used_embed = True
-                except Exception as e:
-                    st.warning(f"Embeddings indisponíveis (usarei TF-IDF): {e}")
-
-            if used_embed and embs is not None:
-                if st.session_state.index.get("embeddings") is None:
-                    st.session_state.index["embeddings"] = embs
-                else:
-                    st.session_state.index["embeddings"] = np.vstack([st.session_state.index["embeddings"], embs])
-                st.session_state.index["tfidf"] = None
-                st.session_state.index["active_backend"] = "Embeddings (Cloud)"
-                st.success(f"Indexados {len(new_chunks)} chunks com Embeddings (Cloud).")
+            if st.session_state.index["embeddings"] is None:
+                st.session_state.index["chunks"] = new_chunks
+                st.session_state.index["embeddings"] = embs
+                st.session_state.index["metas"] = new_metas
             else:
-                # TF-IDF
-                tfidf_model = build_tfidf(st.session_state.index["chunks"])
-                st.session_state.index["tfidf"] = tfidf_model
-                st.session_state.index["embeddings"] = None
-                st.session_state.index["active_backend"] = "TF-IDF (local)"
-                st.success(f"Indexados {len(new_chunks)} chunks com TF-IDF (local).")
+                st.session_state.index["chunks"].extend(new_chunks)
+                st.session_state.index["metas"].extend(new_metas)
+                st.session_state.index["embeddings"] = np.vstack([st.session_state.index["embeddings"], embs])
+
+            st.success(f"Indexados {len(new_chunks)} chunks do upload.")
 
 # -------------------------
-# UI principal
+# UI: título + status
 # -------------------------
-st.title("ESO • CHAT — Ollama Cloud (RAG opcional)")
-st.caption("Cloud preview • Chat via /api/chat • RAG via Embeddings ou TF-IDF (fallback)")
+st.title("ESO • CHAT — FastEmbed + Ollama Cloud (RAG)")
+st.caption("Embeddings locais (FastEmbed) • Chat remoto (Ollama Cloud) • Detecção WS/Precursores/CP")
 
-if st.session_state.index["active_backend"]:
-    st.info(f"Motor de similaridade em uso: **{st.session_state.index['active_backend']}**")
+with st.expander("📚 Status do índice (uploads + histórico)", expanded=False):
+    n_chunks = len(st.session_state.index["chunks"])
+    n_hist   = analytics["hist_vecs"].shape[0] if isinstance(analytics.get("hist_vecs"), np.ndarray) else 0
+    st.write(f"Chunks (uploads): **{n_chunks}** | Chunks (histórico): **{n_hist}**")
+    if n_chunks > 0:
+        st.dataframe(pd.DataFrame(st.session_state.index["metas"]).head(50), use_container_width=True)
 
-# histórico
+# -------------------------
+# Chat
+# -------------------------
+# histórico visual
 for m in st.session_state.chat:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
+
+def ollama_chat(messages, temperature=0.2, stream=False, timeout=120):
+    if not OLLAMA_API_KEY:
+        raise RuntimeError("Defina OLLAMA_API_KEY em Secrets.")
+    payload = {"model": OLLAMA_MODEL, "messages": messages, "temperature": float(temperature), "stream": bool(stream)}
+    r = requests.post(f"{OLLAMA_HOST}/api/chat", headers=HEADERS_JSON, json=payload, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
 
 prompt = st.chat_input("Digite sua pergunta…")
 if prompt:
@@ -354,45 +329,52 @@ if prompt:
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # RAG
     context_blocks = []
-    idx = st.session_state.index
-    chunks = idx["chunks"]
 
-    if chunks:
+    # 1) RAG de uploads
+    if st.session_state.index["embeddings"] is not None and len(st.session_state.index["chunks"]) > 0:
         try:
+            q_vec = embed_texts([prompt], EMB_MODEL)[0]
+            V = st.session_state.index["embeddings"]
+            sims = cosine_sim(np.expand_dims(q_vec, 0), V)[0]
+            order = np.argsort(-sims)
             hits = []
-            if idx["embeddings"] is not None:
-                # Embeddings (Cloud)
-                q_vec = np.array(ollama_embed(prompt, model=OLLAMA_EMBED_MODEL)[0], dtype=np.float32)
-                V = idx["embeddings"]
-                sims = cosine_sim(q_vec[None, :], V)[0]
-                order = np.argsort(-sims)
-                for j in order[: max(50, topk)]:
-                    if sims[j] >= sim_threshold:
-                        hits.append((float(sims[j]), idx["metas"][j], chunks[j]))
-            elif idx["tfidf"] is not None:
-                # TF-IDF (local)
-                model = idx["tfidf"]
-                qv = tfidf_query_vector(prompt, model)  # (1,D)
-                sims = (qv @ model["X"].T).flatten()    # (N,)
-                order = np.argsort(-sims)
-                for j in order[: max(50, topk)]:
-                    if sims[j] >= sim_threshold:
-                        hits.append((float(sims[j]), idx["metas"][j], chunks[j]))
-
+            for idx in order[: max(50, topk)]:
+                if sims[idx] >= sim_threshold:
+                    meta = st.session_state.index["metas"][idx]
+                    txt = st.session_state.index["chunks"][idx]
+                    hits.append((float(sims[idx]), meta, txt))
             hits = hits[:topk]
             for s, meta, txt in hits:
-                context_blocks.append(f"[{meta['file']} / {meta['chunk_id']}] (sim={s:.3f})\n{txt}")
+                context_blocks.append(f"[UPLOAD:{meta['file']} #{meta['chunk_id']}] (sim={s:.3f})\n{txt}")
         except Exception as e:
-            st.warning(f"RAG desativado nesta mensagem: {e}")
+            st.warning(f"RAG de uploads desabilitado: {e}")
+
+    # 2) RAG de histórico (opcional)
+    if analytics["hist_vecs"].size > 0 and len(analytics.get("hist_texts", [])) > 0:
+        try:
+            q_vec = embed_texts([prompt], EMB_MODEL)[0]
+            Vh = analytics["hist_vecs"]
+            sims_h = cosine_sim(np.expand_dims(q_vec, 0), Vh)[0]
+            order_h = np.argsort(-sims_h)
+            hits_h = []
+            for idx in order_h[: max(50, topk)]:
+                if sims_h[idx] >= sim_threshold:
+                    meta = analytics["hist_texts"][idx]
+                    txt = meta.get("text", "")
+                    src = meta.get("source","HIST")
+                    hits_h.append((float(sims_h[idx]), src, txt))
+            hits_h = hits_h[:topk]
+            for s, src, txt in hits_h:
+                context_blocks.append(f"[HIST:{src}] (sim={s:.3f})\n{txt}")
+        except Exception as e:
+            st.warning(f"RAG de histórico desabilitado: {e}")
 
     SYSTEM_PROMPT = (
         "Você é um assistente para gestão de segurança operacional. "
-        "Responda de forma objetiva; quando usar contexto, cite o trecho [arquivo/chunk]. "
-        "Se a base não tiver a resposta, seja transparente."
+        "Quando houver CONTEXTOS RELEVANTES, use-os para responder de forma objetiva e cite a origem. "
+        "Se não houver contexto suficiente, seja transparente."
     )
-
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     if context_blocks:
         ctx = "\n\n".join(context_blocks)
@@ -402,9 +384,9 @@ if prompt:
         messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
-        with st.spinner("Consultando o modelo na nuvem…"):
+        with st.spinner("Consultando o modelo…"):
             try:
-                resp = ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False)
+                resp = ollama_chat(messages, temperature=0.2, stream=False)
                 content = resp.get("message", {}).get("content", "").strip() or json.dumps(resp)[:1000]
             except Exception as e:
                 content = f"Falha ao consultar o modelo: {e}"
@@ -412,20 +394,74 @@ if prompt:
     st.session_state.chat.append({"role": "assistant", "content": content})
 
 # -------------------------
-# Status do índice
+# 🔎 Detecções no upload (WS / Precursores / CP)
 # -------------------------
-with st.expander("📚 Status do índice (RAG)", expanded=False):
-    idx = st.session_state.index
-    n_chunks = len(idx["chunks"])
-    st.write(f"Chunks indexados: **{n_chunks}**")
-    st.write(f"Backend ativo: **{idx['active_backend'] or '—'}**")
-    if n_chunks > 0:
-        st.dataframe(pd.DataFrame(idx["metas"]).head(50), use_container_width=True)
-        if st.button("Baixar índice (CSV de chunks)", use_container_width=True):
-            df = pd.DataFrame({
-                "file": [m["file"] for m in idx["metas"]],
-                "chunk_id": [m["chunk_id"] for m in idx["metas"]],
-                "text": idx["chunks"],
-            })
-            csv = df.to_csv(index=False).encode("utf-8")
-            st.download_button("Download CSV", data=csv, file_name="rag_chunks.csv", mime="text/csv", use_container_width=True)
+st.divider()
+st.subheader("🔎 Detecções no upload (WS / Precursores / Taxonomia CP)")
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    thr_ws   = st.slider("Limiar WS",   0.05, 0.95, 0.35, 0.01)
+with col2:
+    thr_prec = st.slider("Limiar Precursores", 0.05, 0.95, 0.35, 0.01)
+with col3:
+    thr_cp   = st.slider("Limiar CP",   0.05, 0.95, 0.35, 0.01)
+
+if st.session_state.index["embeddings"] is None or len(st.session_state.index["chunks"]) == 0:
+    st.info("Envie um arquivo na barra lateral para analisar.")
+else:
+    V_chunks = st.session_state.index["embeddings"]
+    chunks   = st.session_state.index["chunks"]
+
+    def top_hits(label_rows, label_vecs, thr, label_key="label", extra_cols=()):
+        """Retorna dataframe com (label, similaridade, trecho) agregando por maior sim vs chunks."""
+        if label_vecs.size == 0:
+            return pd.DataFrame(columns=[label_key,"similaridade","trecho"] + list(extra_cols))
+        S = cosine_sim(V_chunks, label_vecs)  # (num_chunks, num_labels)
+        best = S.max(axis=0)                  # (num_labels,)
+        argc = S.argmax(axis=0)               # chunk id de maior sim para cada label
+        rows = []
+        for j, simv in enumerate(best):
+            if simv >= thr:
+                lbl = label_rows[j]
+                ch  = chunks[int(argc[j])]
+                base = {label_key: lbl[label_key] if label_key in lbl else lbl.get("label",""),
+                        "similaridade": float(simv),
+                        "trecho": ch}
+                for k in extra_cols:
+                    base[k] = lbl.get(k,"")
+                rows.append(base)
+        if not rows:
+            return pd.DataFrame(columns=[label_key,"similaridade","trecho"] + list(extra_cols))
+        return pd.DataFrame(rows).sort_values("similaridade", ascending=False).reset_index(drop=True)
+
+    # WS
+    ws_rows = [{"label": d.get("label","")} for d in analytics.get("ws_labels", [])]
+    df_ws = top_hits(ws_rows, analytics.get("ws_vecs", np.zeros((0,1),dtype=np.float32)), thr_ws, label_key="label")
+    st.markdown("**Weak Signals detectados (acima do limiar)**")
+    st.dataframe(df_ws.head(100), use_container_width=True)
+
+    # Precursores
+    prec_rows = [{"label": d.get("label",""), "hto": d.get("hto","") } for d in analytics.get("prec_labels", [])]
+    df_prec = top_hits(prec_rows, analytics.get("prec_vecs", np.zeros((0,1),dtype=np.float32)), thr_prec, label_key="label", extra_cols=("hto",))
+    st.markdown("**Precursores detectados (acima do limiar)**")
+    st.dataframe(df_prec.head(100), use_container_width=True)
+
+    # Taxonomia CP
+    cp_rows = [{"label": d.get("label",""),
+                "dimensao": d.get("dimensao",""),
+                "fator": d.get("fator",""),
+                "sub1": d.get("sub1",""),
+                "sub2": d.get("sub2","")} for d in analytics.get("cp_labels", [])]
+    df_cp = top_hits(cp_rows, analytics.get("cp_vecs", np.zeros((0,1),dtype=np.float32)), thr_cp,
+                     label_key="label", extra_cols=("dimensao","fator","sub1","sub2"))
+    st.markdown("**Taxonomia CP (acima do limiar)**")
+    st.dataframe(df_cp.head(200), use_container_width=True)
+
+    # Exportar Excel (2 abas)
+    if st.button("Baixar Excel (WS & Precursores)"):
+        with pd.ExcelWriter("detecções.xlsx", engine="xlsxwriter") as writer:
+            (df_ws if not df_ws.empty else pd.DataFrame(columns=["label","similaridade","trecho"])).to_excel(writer, index=False, sheet_name="WS")
+            (df_prec if not df_prec.empty else pd.DataFrame(columns=["label","hto","similaridade","trecho"])).to_excel(writer, index=False, sheet_name="Precursores")
+        with open("detecções.xlsx","rb") as f:
+            st.download_button("Download detecções.xlsx", f.read(), file_name="detecções.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
