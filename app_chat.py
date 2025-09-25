@@ -6,12 +6,27 @@ from typing import List, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
-from sentence_transformers import SentenceTransformer
 
 try:
     from ollama import Client
 except Exception:
     Client = None  # evita crash em import no ambiente sem ollama lib
+
+import requests, os
+
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "https://api.ollama.com")
+OLLAMA_API_KEY = os.getenv("5c48f8c895db45f5bc2475644acaff88.nwLvpY3ILPP6z5RmF4BETUiR")
+
+def ollama_embed(texts, model="nomic-embed-text"):
+    r = requests.post(
+        f"{OLLAMA_HOST}/api/embeddings",
+        headers={"Authorization": f"Bearer {OLLAMA_API_KEY}", "Content-Type": "application/json"},
+        json={"model": model, "input": texts}, timeout=60
+    )
+    r.raise_for_status()
+    # retorno: {"embeddings": [[...], [...]]}
+    return r.json()["embeddings"]
+
 
 # ----------------------------
 # Config
