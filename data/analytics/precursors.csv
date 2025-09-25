@@ -1,0 +1,55 @@
+HTO,Precursor
+Humano,descumprimento de procedimento/non compliance with procedure
+Humano,não seguiu o procedimento/did not follow procedure
+Organizacional,pressão por produtividade/production pressure
+Organizacional,falha na análise de risco/failure in risk assessment
+Organizacional,revisão técnica ausente/technical review missing
+Organizacional,procedimento desatualizado/outdated procedure
+Organizacional,manutenção preventiva/preventive maintenance issue
+Organizacional,sem inspeção/no inspection
+Organizacional,procedimento ausente/missing procedure
+Tecnico,ruptura de tubulação/pipe rupture
+Tecnico,falha hidráulica/hydraulic failure
+Tecnico,vazamento de gás/gas leak
+Tecnico,falha de alarme/alarm failure
+Tecnico,equipamento mal calibrado/miscalibrated equipment
+Tecnico,quebra de equipamento/equipment breakdown
+Tecnico,falha técnica/tecnical fault
+Tecnico,falha de vedação/seal failure
+Humano,detector coberto/covered detector
+Humano,falha operacional/operational failure
+Humano,decisão inadequada/inadequate decision
+Humano,falta de concentração/lack of concentration
+Humano,não estava usando/not wearing
+Humano,erro humano/human error
+Humano,violação de regra/rule violation
+Organizacional,sem procedimento/no procedure
+Organizacional,ausência de procedimento/absence of procedure
+Organizacional,falha no planejamento/planning failure
+Organizacional,falta de planejamento/lack of planning
+Organizacional,priorização inadequada/inappropriate prioritization
+Organizacional,sem cronograma/no schedule
+Organizacional,supervisão inadequada/inadequate supervision
+Organizacional,manutenção deficiente/poor maintenance
+Organizacional,treinamento insuficiente/insufficient training
+Organizacional,treinamento deficiente/poor training
+Organizacional,inconsistência em documentação/documentation inconsistency
+Organizacional,gestão de mudanças ineficaz/ineffective management of change
+Organizacional,não planejado/unplanned activity
+Tecnico,falha de sensor/sensor failure
+Tecnico,pane elétrica/electrical fault
+Tecnico,falha de isolamento/insulation failure
+Tecnico,defeito crítico no sistema/critical system defect
+Tecnico,perda de contenção/loss of containment
+Tecnico,deterioração mecânica/mechanical degradation
+Tecnico,pressurização indevida/unintended pressurization
+Tecnico,falha estrutural/structural failure
+Humano,erro de julgamento/misjudgment
+Humano,erro de comunicação verbal/verbal communication error
+Humano,porta deixada aberta/door left open
+Humano,falta de atenção/lack of attention
+Organizacional,sem briefing/no pre-task briefing
+Organizacional,falha de comunicação/communication failure
+Organizacional,sem comunicação/lack of communication
+Organizacional,cultura de segurança fraca/weak security culture
+Humano,objeto derrubado/dropped object
