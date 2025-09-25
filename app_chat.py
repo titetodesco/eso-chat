@@ -1,13 +1,11 @@
 # app_chat.py
 # Chat RAG com Ollama Cloud (chat + embeddings) — pronto para Streamlit Cloud
-# - Sem PyTorch e sem sentence-transformers
+# - Sem PyTorch / sentence-transformers locais
 # - Usa secrets: OLLAMA_API_KEY (obrigatório), OLLAMA_HOST/OLLAMA_MODEL/OLLAMA_EMBED_MODEL (opcionais)
 
 import os
 import io
 import json
-import time
-import math
 import requests
 import numpy as np
 import pandas as pd
@@ -24,16 +22,15 @@ try:
 except Exception:
     docx = None
 
-# -------------------------
-# Configurações básicas
-# -------------------------
 st.set_page_config(page_title="ESO • CHAT (Ollama Cloud)", page_icon="💬", layout="wide")
 
-# Segredos / env (com defaults seguros)
-OLLAMA_HOST        = st.secrets.get("OLLAMA_HOST", os.getenv("OLLAMA_HOST", "https://ollama.com"))
+# -------------------------
+# Secrets / Env (defaults corretos)
+# -------------------------
+OLLAMA_HOST        = st.secrets.get("OLLAMA_HOST", os.getenv("OLLAMA_HOST", "https://api.ollama.com"))
 OLLAMA_MODEL       = st.secrets.get("OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "llama3.1"))
 OLLAMA_API_KEY     = st.secrets.get("OLLAMA_API_KEY", os.getenv("OLLAMA_API_KEY", None))
-OLLAMA_EMBED_MODEL = st.secrets.get("OLLAMA_EMBED_MODEL", os.getenv("OLLAMA_EMBED_MODEL", "all-minilm"))
+OLLAMA_EMBED_MODEL = st.secrets.get("OLLAMA_EMBED_MODEL", os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text"))
 
 if not OLLAMA_API_KEY:
     st.error("⚠️ OLLAMA_API_KEY não encontrado. Defina em **Settings → Secrets** no Streamlit Cloud.")
@@ -45,7 +42,7 @@ HEADERS_JSON = {
 }
 
 # -------------------------
-# Funções utilitárias
+# Utilitários
 # -------------------------
 def chunk_text(text: str, max_chars: int = 1200, overlap: int = 200):
     """Divide texto em pedaços com sobreposição para RAG."""
@@ -84,7 +81,6 @@ def read_docx(file: bytes) -> str:
     return "\n".join(p.text for p in document.paragraphs)
 
 def read_xlsx(file: bytes) -> str:
-    # Concatena todas as planilhas e colunas em um textão simples
     f = io.BytesIO(file)
     xls = pd.ExcelFile(f)
     frames = []
@@ -112,7 +108,6 @@ def load_file_to_text(uploaded_file) -> str:
         return read_xlsx(data)
     if name.endswith(".csv"):
         return read_csv(data)
-    # txt / md ou outros
     try:
         return data.decode("utf-8", errors="ignore")
     except Exception:
@@ -128,7 +123,6 @@ def cosine_sim(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     if b.ndim == 1:
         b = b[None, :]
 
-    # Se algum estiver vazio, devolve matriz zero do shape correto
     if a.size == 0 or b.size == 0:
         return np.zeros((a.shape[0], b.shape[0]), dtype=np.float32)
 
@@ -136,9 +130,8 @@ def cosine_sim(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     b_norm = np.linalg.norm(b, axis=1, keepdims=True) + 1e-9
     return (a @ b.T) / (a_norm * b_norm)
 
-
 # -------------------------
-# Ollama Cloud API calls
+# Ollama Cloud API
 # -------------------------
 def ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False, timeout=120):
     payload = {
@@ -161,26 +154,26 @@ def ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False, tim
 def ollama_embed(texts, model=OLLAMA_EMBED_MODEL, timeout=120):
     """
     Retorna uma lista de vetores (float[]) para cada texto.
-    Endpoint correto na Cloud: POST /api/embed
+    Endpoint correto: POST /api/embeddings
     """
     if isinstance(texts, str):
         texts = [texts]
     payload = {"model": model, "input": texts}
     r = requests.post(
-        f"{OLLAMA_HOST}/api/embed",
+        f"{OLLAMA_HOST}/api/embeddings",
         headers=HEADERS_JSON,
         json=payload,
         timeout=timeout
     )
     r.raise_for_status()
     data = r.json()
-    # Resposta padrão: {"embeddings":[[...],[...],...]}
+    # Resposta típica: {"embeddings":[[...],[...],...]}
     if "embeddings" in data and isinstance(data["embeddings"], list):
         return data["embeddings"]
-    # fallback muito defensivo (diferenças futuras)
+    # Fallback bem defensivo:
     if "embedding" in data and isinstance(data["embedding"], list):
         return [data["embedding"]]
-    raise RuntimeError("Resposta inesperada do /api/embed: " + json.dumps(data)[:300])
+    raise RuntimeError("Resposta inesperada do /api/embeddings: " + json.dumps(data)[:300])
 
 # -------------------------
 # Estado da aplicação
@@ -246,6 +239,18 @@ with st.sidebar.expander("Diagnóstico de conexão", expanded=False):
             st.json(r.json())
         except Exception as e:
             st.error(f"Falhou: {e}")
+    if st.button("Teste /api/embeddings", use_container_width=True):
+        try:
+            r = requests.post(
+                f"{OLLAMA_HOST}/api/embeddings",
+                headers=HEADERS_JSON,
+                json={"model": OLLAMA_EMBED_MODEL, "input": ["teste de embedding"]},
+                timeout=60
+            )
+            st.write("Status:", r.status_code)
+            st.json(r.json())
+        except Exception as e:
+            st.error(f"Falhou: {e}")
 
 # -------------------------
 # Indexação (RAG)
@@ -271,6 +276,9 @@ if uploaded_files:
                 try:
                     vecs = ollama_embed(batch, model=OLLAMA_EMBED_MODEL)
                     embs.extend(vecs)
+                except requests.HTTPError as http_err:
+                    st.error(f"Erro HTTP ao gerar embeddings: {http_err} — corpo: {getattr(http_err.response, 'text', '')[:300]}")
+                    st.stop()
                 except Exception as e:
                     st.error(f"Erro ao gerar embeddings: {e}")
                     st.stop()
@@ -343,6 +351,8 @@ if prompt:
             try:
                 resp = ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False)
                 content = resp.get("message", {}).get("content", "").strip() or json.dumps(resp)[:1000]
+            except requests.HTTPError as http_err:
+                content = f"Falha HTTP ao consultar o modelo: {http_err} — corpo: {getattr(http_err.response, 'text', '')[:300]}"
             except Exception as e:
                 content = f"Falha ao consultar o modelo: {e}"
             st.markdown(content)
@@ -357,11 +367,10 @@ with st.expander("📚 Status do índice (RAG)", expanded=False):
     st.write(f"Chunks indexados: **{n_chunks}**")
     if n_chunks > 0:
         st.dataframe(pd.DataFrame(idx["metas"]).head(50), use_container_width=True)
-        if st.button("Baixar índice (CSV de chunks)", use_container_width=True):
-            df = pd.DataFrame({
-                "file": [m["file"] for m in idx["metas"]],
-                "chunk_id": [m["chunk_id"] for m in idx["metas"]],
-                "text": idx["chunks"],
-            })
-            csv = df.to_csv(index=False).encode("utf-8")
-            st.download_button("Download CSV", data=csv, file_name="rag_chunks.csv", mime="text/csv", use_container_width=True)
+        df = pd.DataFrame({
+            "file": [m["file"] for m in idx["metas"]],
+            "chunk_id": [m["chunk_id"] for m in idx["metas"]],
+            "text": idx["chunks"],
+        })
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("Download CSV dos chunks", data=csv, file_name="rag_chunks.csv", mime="text/csv", use_container_width=True)
