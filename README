@@ -1,2 +1,1 @@
-pip install -r requirements.txt
-streamlit run app_chat.py
+https://eso-chat.streamlit.app/ 
