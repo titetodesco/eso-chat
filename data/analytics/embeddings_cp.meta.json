@@ -1,0 +1,10 @@
+{
+  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "count": 30,
+  "ts": 1758651790,
+  "source": "data\\xlsx\\TaxonomiaCP_Por.xlsx",
+  "schema": {
+    "label": "Dimensão > Fator > Subfator 1 > Subfator 2",
+    "text": "Bag de termos (PT/EN) com separadores ; ou ,"
+  }
+}
