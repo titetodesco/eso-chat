@@ -1,0 +1,25 @@
+# Python / Streamlit
+__pycache__/
+*.pyc
+.venv/
+env/
+.conda/
+.ipynb_checkpoints/
+.streamlit/secrets.toml
+
+# Artefatos temporários / índices locais
+data/storage/
+data/tmp/
+tmp/
+*.log
+
+# Arquivos que você NÃO quer versionar (se decidir gerar em runtime)
+# (se for versionar os .npz no repositório, REMOVA as duas linhas abaixo)
+*.npz
+*.npy
+
+# SO / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
