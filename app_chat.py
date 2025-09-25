@@ -1,14 +1,13 @@
 # app_chat.py
 # Chat RAG com Ollama Cloud (chat + embeddings) — pronto para Streamlit Cloud
 # - Sem PyTorch e sem sentence-transformers
-# - Usa secrets: OLLAMA_API_KEY (obrigatório), OLLAMA_HOST (opcional), OLLAMA_MODEL (opcional)
+# - Usa secrets: OLLAMA_API_KEY (obrigatório), OLLAMA_HOST/OLLAMA_MODEL/OLLAMA_EMBED_MODEL (opcionais)
 
 import os
 import io
 import json
 import time
 import math
-import base64
 import requests
 import numpy as np
 import pandas as pd
@@ -25,22 +24,22 @@ try:
 except Exception:
     docx = None
 
-
 # -------------------------
 # Configurações básicas
 # -------------------------
 st.set_page_config(page_title="ESO • CHAT (Ollama Cloud)", page_icon="💬", layout="wide")
 
-# Segredos / env
-OLLAMA_HOST  = st.secrets.get("OLLAMA_HOST", os.getenv("OLLAMA_HOST", "https://api.ollama.com"))
-OLLAMA_MODEL = st.secrets.get("OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "llama3.1"))
-OLLAMA_API_KEY = st.secrets.get("OLLAMA_API_KEY", os.getenv("OLLAMA_API_KEY", None))
+# Segredos / env (com defaults seguros)
+OLLAMA_HOST        = st.secrets.get("OLLAMA_HOST", os.getenv("OLLAMA_HOST", "https://ollama.com"))
+OLLAMA_MODEL       = st.secrets.get("OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "llama3.1"))
+OLLAMA_API_KEY     = st.secrets.get("OLLAMA_API_KEY", os.getenv("OLLAMA_API_KEY", None))
+OLLAMA_EMBED_MODEL = st.secrets.get("OLLAMA_EMBED_MODEL", os.getenv("OLLAMA_EMBED_MODEL", "all-minilm"))
 
 if not OLLAMA_API_KEY:
     st.error("⚠️ OLLAMA_API_KEY não encontrado. Defina em **Settings → Secrets** no Streamlit Cloud.")
     st.stop()
 
-HEADERS = {
+HEADERS_JSON = {
     "Authorization": f"Bearer {OLLAMA_API_KEY}",
     "Content-Type": "application/json",
 }
@@ -50,18 +49,20 @@ HEADERS = {
 # -------------------------
 def chunk_text(text: str, max_chars: int = 1200, overlap: int = 200):
     """Divide texto em pedaços com sobreposição para RAG."""
+    if not text:
+        return []
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     parts = []
     start = 0
-    while start < len(text):
-        end = min(len(text), start + max_chars)
-        parts.append(text[start:end])
-        if end == len(text):
+    L = len(text)
+    overlap = max(0, min(overlap, max_chars - 1))
+    while start < L:
+        end = min(L, start + max_chars)
+        parts.append(text[start:end].strip())
+        if end >= L:
             break
-        start = end - overlap
-        if start < 0:
-            start = 0
-    return [p.strip() for p in parts if p.strip()]
+        start = max(0, end - overlap)
+    return [p for p in parts if p]
 
 def read_pdf(file: bytes) -> str:
     if pypdf is None:
@@ -111,11 +112,16 @@ def load_file_to_text(uploaded_file) -> str:
         return read_xlsx(data)
     if name.endswith(".csv"):
         return read_csv(data)
-    # txt / md
-    return data.decode("utf-8", errors="ignore")
+    # txt / md ou outros
+    try:
+        return data.decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
 
 def cosine_sim(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     # a: (n,d), b:(m,d) -> (n,m)
+    if a.size == 0 or b.size == 0:
+        return np.zeros((a.shape[0], b.shape[0]], dtype=np.float32) if a.size else np.zeros((0,0), dtype=np.float32)
     a_norm = np.linalg.norm(a, axis=1, keepdims=True) + 1e-9
     b_norm = np.linalg.norm(b, axis=1, keepdims=True) + 1e-9
     return (a @ b.T) / (a_norm * b_norm)
@@ -127,43 +133,43 @@ def ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False, tim
     payload = {
         "model": model,
         "messages": messages,
-        "temperature": temperature,
-        "stream": stream,
+        "temperature": float(temperature),
+        "stream": bool(stream),
     }
     r = requests.post(
         f"{OLLAMA_HOST}/api/chat",
-        headers=HEADERS,
+        headers=HEADERS_JSON,
         json=payload,
         timeout=timeout
     )
     r.raise_for_status()
     if stream:
-        # (não usado aqui; manter para extensão futura)
         return r.iter_lines()
     return r.json()
 
-def ollama_embed(texts, model="nomic-embed-text", timeout=120):
+def ollama_embed(texts, model=OLLAMA_EMBED_MODEL, timeout=120):
     """
     Retorna uma lista de vetores (float[]) para cada texto.
-    Endpoint: POST /api/embeddings
+    Endpoint correto na Cloud: POST /api/embed
     """
     if isinstance(texts, str):
         texts = [texts]
     payload = {"model": model, "input": texts}
     r = requests.post(
-        f"{OLLAMA_HOST}/api/embeddings",
-        headers=HEADERS,
+        f"{OLLAMA_HOST}/api/embed",
+        headers=HEADERS_JSON,
         json=payload,
         timeout=timeout
     )
     r.raise_for_status()
     data = r.json()
-    # Pode vir {"embeddings": [[...],[...]]} ou {"embedding":[...]} dependendo da versão.
-    if "embeddings" in data:
+    # Resposta padrão: {"embeddings":[[...],[...],...]}
+    if "embeddings" in data and isinstance(data["embeddings"], list):
         return data["embeddings"]
-    if "embedding" in data:
+    # fallback muito defensivo (diferenças futuras)
+    if "embedding" in data and isinstance(data["embedding"], list):
         return [data["embedding"]]
-    raise RuntimeError("Resposta inesperada do /api/embeddings: " + json.dumps(data)[:300])
+    raise RuntimeError("Resposta inesperada do /api/embed: " + json.dumps(data)[:300])
 
 # -------------------------
 # Estado da aplicação
@@ -173,7 +179,6 @@ if "index" not in st.session_state:
         "chunks": [],          # lista de textos
         "embeddings": None,    # np.ndarray (n, d)
         "metas": [],           # infos básicas (arquivo, posição, etc.)
-        "embed_model": "nomic-embed-text",
     }
 
 if "chat" not in st.session_state:
@@ -186,7 +191,7 @@ st.sidebar.header("Configurações")
 with st.sidebar.expander("Ollama Cloud", expanded=True):
     st.write("Host:", OLLAMA_HOST)
     st.write("Modelo (chat):", OLLAMA_MODEL)
-    st.write("Modelo (embeddings):", st.session_state.index["embed_model"])
+    st.write("Modelo (embeddings):", OLLAMA_EMBED_MODEL)
 
 topk = st.sidebar.slider("Top-K contexto (RAG)", 1, 10, 4, 1)
 chunk_size = st.sidebar.slider("Tamanho do chunk (caracteres)", 500, 2000, 1200, 50)
@@ -195,24 +200,48 @@ sim_threshold = st.sidebar.slider("Limiar de similaridade (cos)", 0.10, 0.95, 0.
 st.sidebar.divider()
 
 uploaded_files = st.sidebar.file_uploader(
-    "Upload de base (PDF, DOCX, XLSX, CSV, TXT/MD)", type=["pdf","docx","xlsx","xls","csv","txt","md"], accept_multiple_files=True
+    "Upload de base (PDF, DOCX, XLSX, CSV, TXT/MD)",
+    type=["pdf","docx","xlsx","xls","csv","txt","md"],
+    accept_multiple_files=True
 )
 
 col_a, col_b = st.sidebar.columns(2)
 with col_a:
     if st.button("Limpar índice", use_container_width=True):
-        st.session_state.index = {"chunks": [], "embeddings": None, "metas": [], "embed_model": "nomic-embed-text"}
+        st.session_state.index = {"chunks": [], "embeddings": None, "metas": []}
 with col_b:
     if st.button("Limpar chat", use_container_width=True):
         st.session_state.chat = []
+
+with st.sidebar.expander("Diagnóstico de conexão", expanded=False):
+    if st.button("Ping /api/tags", use_container_width=True):
+        try:
+            r = requests.get(f"{OLLAMA_HOST}/api/tags", headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"}, timeout=20)
+            st.write("Status:", r.status_code)
+            if r.headers.get("content-type","").startswith("application/json"):
+                st.json(r.json())
+            else:
+                st.write(r.text[:1000])
+        except Exception as e:
+            st.error(f"Falhou: {e}")
+    if st.button("Teste /api/chat", use_container_width=True):
+        try:
+            r = requests.post(
+                f"{OLLAMA_HOST}/api/chat",
+                headers=HEADERS_JSON,
+                json={"model": OLLAMA_MODEL, "messages":[{"role":"user","content":"diga OK"}], "stream": False},
+                timeout=60)
+            st.write("Status:", r.status_code)
+            st.json(r.json())
+        except Exception as e:
+            st.error(f"Falhou: {e}")
 
 # -------------------------
 # Indexação (RAG)
 # -------------------------
 if uploaded_files:
     with st.spinner("Lendo arquivos e gerando embeddings no Ollama Cloud…"):
-        new_chunks = []
-        new_metas = []
+        new_chunks, new_metas = [], []
         for uf in uploaded_files:
             try:
                 text = load_file_to_text(uf)
@@ -224,22 +253,18 @@ if uploaded_files:
                 st.warning(f"Falha ao processar {uf.name}: {e}")
 
         if new_chunks:
-            # Embeddings via Ollama Cloud
             embs = []
-            # para evitar payloads enormes, vamos em lotes
-            BATCH = 32
+            BATCH = 32  # limite defensivo
             for i in range(0, len(new_chunks), BATCH):
                 batch = new_chunks[i : i + BATCH]
                 try:
-                    vecs = ollama_embed(batch, model=st.session_state.index["embed_model"])
+                    vecs = ollama_embed(batch, model=OLLAMA_EMBED_MODEL)
                     embs.extend(vecs)
                 except Exception as e:
                     st.error(f"Erro ao gerar embeddings: {e}")
                     st.stop()
 
             embs = np.array(embs, dtype=np.float32)
-
-            # Concatena com índice existente
             if st.session_state.index["embeddings"] is None:
                 st.session_state.index["chunks"] = new_chunks
                 st.session_state.index["embeddings"] = embs
@@ -272,7 +297,7 @@ if prompt:
     context_blocks = []
     if st.session_state.index["embeddings"] is not None and len(st.session_state.index["chunks"]) > 0:
         try:
-            q_vec = np.array(ollama_embed(prompt, model=st.session_state.index["embed_model"])[0], dtype=np.float32)
+            q_vec = np.array(ollama_embed(prompt, model=OLLAMA_EMBED_MODEL)[0], dtype=np.float32)
             V = st.session_state.index["embeddings"]
             sims = cosine_sim(np.expand_dims(q_vec, 0), V)[0]  # (n,)
             order = np.argsort(-sims)  # desc
