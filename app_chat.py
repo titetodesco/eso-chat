@@ -121,7 +121,7 @@ def load_file_to_text(uploaded_file) -> str:
 def cosine_sim(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     # a: (n,d), b:(m,d) -> (n,m)
     if a.size == 0 or b.size == 0:
-        return np.zeros((a.shape[0], b.shape[0]], dtype=np.float32) if a.size else np.zeros((0,0), dtype=np.float32)
+        return np.zeros((a.shape[0], b.shape[0], dtype=np.float32) if a.size else np.zeros((0,0), dtype=np.float32)
     a_norm = np.linalg.norm(a, axis=1, keepdims=True) + 1e-9
     b_norm = np.linalg.norm(b, axis=1, keepdims=True) + 1e-9
     return (a @ b.T) / (a_norm * b_norm)
