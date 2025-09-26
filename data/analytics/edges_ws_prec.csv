@@ -1,0 +1,436 @@
+weaksignal,precursor,hto
+incomplete job safety analysis,descumprimento de procedimento/non compliance with procedure,Humano
+procedure not fully followed,descumprimento de procedimento/non compliance with procedure,Humano
+procedure not fully followed,não seguiu o procedimento/did not follow procedure,Humano
+pressure drop in critical line,pressão por produtividade/production pressure,Organizacional
+hazard label unreadable,falha na análise de risco/failure in risk assessment,Organizacional
+safety checks performed superficially,revisão técnica ausente/technical review missing,Organizacional
+incomplete job safety analysis,revisão técnica ausente/technical review missing,Organizacional
+incomplete job safety analysis,procedimento desatualizado/outdated procedure,Organizacional
+procedure not fully followed,procedimento desatualizado/outdated procedure,Organizacional
+procedural compliance variable,manutenção preventiva/preventive maintenance issue,Organizacional
+poor lighting near equipment,sem inspeção/no inspection,Organizacional
+visual inspection skipped,sem inspeção/no inspection,Organizacional
+procedure not fully followed,procedimento ausente/missing procedure,Organizacional
+recurrent alarm acknowledged without investigation,falha na análise de risco/failure in risk assessment,Organizacional
+routine inspections delayed,sem inspeção/no inspection,Organizacional
+safety checks performed superficially,sem inspeção/no inspection,Organizacional
+unauthorized modification of settings,manutenção preventiva/preventive maintenance issue,Organizacional
+recurring manual reset of safety valve,ruptura de tubulação/pipe rupture,Tecnico
+recurring manual reset of safety valve,falha hidráulica/hydraulic failure,Tecnico
+pressure drop in critical line,falha hidráulica/hydraulic failure,Tecnico
+pressure drop in critical line,vazamento de gás/gas leak,Tecnico
+multiple alarms triggered,falha de alarme/alarm failure,Tecnico
+incomplete job safety analysis,equipamento mal calibrado/miscalibrated equipment,Tecnico
+conflicting operational instructions,equipamento mal calibrado/miscalibrated equipment,Tecnico
+incomplete job safety analysis,quebra de equipamento/equipment breakdown,Tecnico
+conflicting operational instructions,quebra de equipamento/equipment breakdown,Tecnico
+incomplete job safety analysis,falha técnica/tecnical fault,Tecnico
+conflicting operational instructions,falha técnica/tecnical fault,Tecnico
+equipment not fully isolated,falha hidráulica/hydraulic failure,Tecnico
+equipment not fully isolated,quebra de equipamento/equipment breakdown,Tecnico
+gas detector offline during activity,vazamento de gás/gas leak,Tecnico
+small leak normalized,vazamento de gás/gas leak,Tecnico
+gas smell dismissed as residual,vazamento de gás/gas leak,Tecnico
+safety checks performed superficially,equipamento mal calibrado/miscalibrated equipment,Tecnico
+poor lighting near equipment,falha de vedação/seal failure,Tecnico
+visual inspection skipped,falha de vedação/seal failure,Tecnico
+small leak normalized,ruptura de tubulação/pipe rupture,Tecnico
+small leak normalized,falha hidráulica/hydraulic failure,Tecnico
+sensor drift unnoticed,detector coberto/covered detector,Humano
+poor lighting near equipment,detector coberto/covered detector,Humano
+conflicting operational instructions,descumprimento de procedimento/non compliance with procedure,Humano
+conflicting operational instructions,falha operacional/operational failure,Humano
+conflicting operational instructions,não seguiu o procedimento/did not follow procedure,Humano
+operator not certified for task,falha operacional/operational failure,Humano
+conflicting operational instructions,decisão inadequada/inadequate decision,Humano
+degraded sensor performance,falta de concentração/lack of concentration,Humano
+degraded sensor performance,detector coberto/covered detector,Humano
+gas detector offline during activity,detector coberto/covered detector,Humano
+equipment not fully isolated,detector coberto/covered detector,Humano
+gas smell dismissed as residual,detector coberto/covered detector,Humano
+gas detector offline during activity,não estava usando/not wearing,Humano
+incomplete job safety analysis,falha operacional/operational failure,Humano
+supervisory fatigue unaddressed,falha operacional/operational failure,Humano
+safety checks performed superficially,descumprimento de procedimento/non compliance with procedure,Humano
+procedural compliance variable,descumprimento de procedimento/non compliance with procedure,Humano
+unexpected system behavior observed,erro humano/human error,Humano
+recurrent minor faults,erro humano/human error,Humano
+recurrent minor faults,falha operacional/operational failure,Humano
+recurring manual reset of safety valve,falha operacional/operational failure,Humano
+safety culture complacency,violação de regra/rule violation,Humano
+small leak normalized,detector coberto/covered detector,Humano
+unauthorized access to hazardous zone,descumprimento de procedimento/non compliance with procedure,Humano
+conflicting operational instructions,procedimento desatualizado/outdated procedure,Organizacional
+conflicting operational instructions,sem procedimento/no procedure,Organizacional
+procedure not fully followed,sem procedimento/no procedure,Organizacional
+conflicting operational instructions,ausência de procedimento/absence of procedure,Organizacional
+procedure not fully followed,ausência de procedimento/absence of procedure,Organizacional
+conflicting operational instructions,procedimento ausente/missing procedure,Organizacional
+incomplete job safety analysis,manutenção preventiva/preventive maintenance issue,Organizacional
+conflicting operational instructions,manutenção preventiva/preventive maintenance issue,Organizacional
+conflicting operational instructions,falha no planejamento/planning failure,Organizacional
+procedure not fully followed,falha no planejamento/planning failure,Organizacional
+conflicting operational instructions,falta de planejamento/lack of planning,Organizacional
+procedure not fully followed,falta de planejamento/lack of planning,Organizacional
+conflicting operational instructions,priorização inadequada/inappropriate prioritization,Organizacional
+degraded sensor performance,priorização inadequada/inappropriate prioritization,Organizacional
+delay in acknowledging alarms,falha na análise de risco/failure in risk assessment,Organizacional
+delay in acknowledging alarms,sem cronograma/no schedule,Organizacional
+routine inspections delayed,sem cronograma/no schedule,Organizacional
+equipment not fully isolated,supervisão inadequada/inadequate supervision,Organizacional
+supervisory fatigue unaddressed,supervisão inadequada/inadequate supervision,Organizacional
+equipment not fully isolated,manutenção deficiente/poor maintenance,Organizacional
+fatigue ignored by supervision,treinamento insuficiente/insufficient training,Organizacional
+supervisory fatigue unaddressed,treinamento insuficiente/insufficient training,Organizacional
+fatigue ignored by supervision,treinamento deficiente/poor training,Organizacional
+supervisory fatigue unaddressed,treinamento deficiente/poor training,Organizacional
+gas detector offline during activity,manutenção preventiva/preventive maintenance issue,Organizacional
+incomplete job safety analysis,falha na análise de risco/failure in risk assessment,Organizacional
+hazard label unreadable,manutenção preventiva/preventive maintenance issue,Organizacional
+safety checks performed superficially,falha na análise de risco/failure in risk assessment,Organizacional
+safety checks performed superficially,manutenção preventiva/preventive maintenance issue,Organizacional
+unauthorized access to hazardous zone,manutenção preventiva/preventive maintenance issue,Organizacional
+incomplete job safety analysis,priorização inadequada/inappropriate prioritization,Organizacional
+recurring manual reset of safety valve,manutenção deficiente/poor maintenance,Organizacional
+shutdown aborted without justification,manutenção deficiente/poor maintenance,Organizacional
+incomplete training records,treinamento insuficiente/insufficient training,Organizacional
+incomplete training records,treinamento deficiente/poor training,Organizacional
+incomplete training records,supervisão inadequada/inadequate supervision,Organizacional
+incomplete training records,ausência de procedimento/absence of procedure,Organizacional
+pending maintenance for critical item,manutenção preventiva/preventive maintenance issue,Organizacional
+maintenance postponed repeatedly,manutenção preventiva/preventive maintenance issue,Organizacional
+pending maintenance for critical item,manutenção deficiente/poor maintenance,Organizacional
+maintenance postponed repeatedly,manutenção deficiente/poor maintenance,Organizacional
+operational limits repeatedly challenged,supervisão inadequada/inadequate supervision,Organizacional
+operator not certified for task,treinamento deficiente/poor training,Organizacional
+operator not certified for task,treinamento insuficiente/insufficient training,Organizacional
+routine inspections delayed,manutenção preventiva/preventive maintenance issue,Organizacional
+procedure not fully followed,sem inspeção/no inspection,Organizacional
+procedure not fully followed,revisão técnica ausente/technical review missing,Organizacional
+procedure not fully followed,falha na análise de risco/failure in risk assessment,Organizacional
+procedure not fully followed,manutenção deficiente/poor maintenance,Organizacional
+routine deviation accepted,falha na análise de risco/failure in risk assessment,Organizacional
+safety alert not disseminated,supervisão inadequada/inadequate supervision,Organizacional
+safety alert not disseminated,manutenção preventiva/preventive maintenance issue,Organizacional
+safety alert not disseminated,priorização inadequada/inappropriate prioritization,Organizacional
+safety alert not disseminated,falha na análise de risco/failure in risk assessment,Organizacional
+safety culture complacency,manutenção preventiva/preventive maintenance issue,Organizacional
+safety culture complacency,inconsistência em documentação/documentation inconsistency,Organizacional
+shutdown aborted without justification,revisão técnica ausente/technical review missing,Organizacional
+shutdown aborted without justification,falha no planejamento/planning failure,Organizacional
+small leak normalized,manutenção preventiva/preventive maintenance issue,Organizacional
+substandard housekeeping in critical areas,supervisão inadequada/inadequate supervision,Organizacional
+temporary fix not followed up,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+temporary fix not followed up,falha no planejamento/planning failure,Organizacional
+temporary fix not followed up,manutenção preventiva/preventive maintenance issue,Organizacional
+temporary fix not followed up,não planejado/unplanned activity,Organizacional
+unauthorized access to hazardous zone,falha na análise de risco/failure in risk assessment,Organizacional
+alarms frequently muted,falha de alarme/alarm failure,Tecnico
+abnormal fluid temperature,vazamento de gás/gas leak,Tecnico
+abnormal fluid temperature,ruptura de tubulação/pipe rupture,Tecnico
+delay in acknowledging alarms,falha de alarme/alarm failure,Tecnico
+recurrent alarm acknowledged without investigation,falha de alarme/alarm failure,Tecnico
+sensor drift unnoticed,equipamento mal calibrado/miscalibrated equipment,Tecnico
+poor lighting near equipment,equipamento mal calibrado/miscalibrated equipment,Tecnico
+gas detector offline during activity,falha de alarme/alarm failure,Tecnico
+conflicting operational instructions,falha de alarme/alarm failure,Tecnico
+safety alert not disseminated,falha de alarme/alarm failure,Tecnico
+emergency equipment blocked,equipamento mal calibrado/miscalibrated equipment,Tecnico
+emergency equipment blocked,falha de alarme/alarm failure,Tecnico
+degraded sensor performance,falha de sensor/sensor failure,Tecnico
+fatigue ignored by supervision,falha de alarme/alarm failure,Tecnico
+emergency equipment blocked,quebra de equipamento/equipment breakdown,Tecnico
+emergency equipment blocked,pane elétrica/electrical fault,Tecnico
+equipment not fully isolated,equipamento mal calibrado/miscalibrated equipment,Tecnico
+gas detector offline during activity,equipamento mal calibrado/miscalibrated equipment,Tecnico
+supervisory fatigue unaddressed,equipamento mal calibrado/miscalibrated equipment,Tecnico
+equipment not fully isolated,falha técnica/tecnical fault,Tecnico
+frequent interlock bypasses,vazamento de gás/gas leak,Tecnico
+interlock override accepted,vazamento de gás/gas leak,Tecnico
+gas detector offline during activity,falha de sensor/sensor failure,Tecnico
+recurrent alarm acknowledged without investigation,vazamento de gás/gas leak,Tecnico
+multiple alarms triggered,vazamento de gás/gas leak,Tecnico
+gas detector offline during activity,falha de isolamento/insulation failure,Tecnico
+poor lighting near equipment,pane elétrica/electrical fault,Tecnico
+gas detector offline during activity,pane elétrica/electrical fault,Tecnico
+incomplete job safety analysis,defeito crítico no sistema/critical system defect,Tecnico
+safety checks performed superficially,defeito crítico no sistema/critical system defect,Tecnico
+supervisory fatigue unaddressed,defeito crítico no sistema/critical system defect,Tecnico
+incomplete job safety analysis,perda de contenção/loss of containment,Tecnico
+recurring manual reset of safety valve,falha de vedação/seal failure,Tecnico
+shutdown aborted without justification,falha de vedação/seal failure,Tecnico
+minor spill unreported,vazamento de gás/gas leak,Tecnico
+operational limits repeatedly challenged,falha de alarme/alarm failure,Tecnico
+pending maintenance for critical item,quebra de equipamento/equipment breakdown,Tecnico
+temporary repair becoming permanent,quebra de equipamento/equipment breakdown,Tecnico
+pressure drop in critical line,perda de contenção/loss of containment,Tecnico
+small leak normalized,perda de contenção/loss of containment,Tecnico
+pressure drop in critical line,deterioração mecânica/mechanical degradation,Tecnico
+small leak normalized,deterioração mecânica/mechanical degradation,Tecnico
+pressure drop in critical line,pressurização indevida/unintended pressurization,Tecnico
+small leak normalized,pressurização indevida/unintended pressurization,Tecnico
+scaffolding improvised or reused,falha técnica/tecnical fault,Tecnico
+unexpected system behavior observed,defeito crítico no sistema/critical system defect,Tecnico
+recurrent minor faults,defeito crítico no sistema/critical system defect,Tecnico
+unexpected system behavior observed,falha técnica/tecnical fault,Tecnico
+recurrent minor faults,falha técnica/tecnical fault,Tecnico
+recurrent minor faults,falha de isolamento/insulation failure,Tecnico
+recurrent minor faults,falha estrutural/structural failure,Tecnico
+recurring manual reset of safety valve,defeito crítico no sistema/critical system defect,Tecnico
+recurring manual reset of safety valve,vazamento de gás/gas leak,Tecnico
+recurring manual reset of safety valve,falha técnica/tecnical fault,Tecnico
+recurring manual reset of safety valve,equipamento mal calibrado/miscalibrated equipment,Tecnico
+recurring manual reset of safety valve,quebra de equipamento/equipment breakdown,Tecnico
+recurring manual reset of safety valve,perda de contenção/loss of containment,Tecnico
+shutdown aborted without justification,quebra de equipamento/equipment breakdown,Tecnico
+shutdown aborted without justification,falha hidráulica/hydraulic failure,Tecnico
+small leak normalized,falha técnica/tecnical fault,Tecnico
+supervisory fatigue unaddressed,perda de contenção/loss of containment,Tecnico
+safety checks performed superficially,não seguiu o procedimento/did not follow procedure,Humano
+visual inspection skipped,não seguiu o procedimento/did not follow procedure,Humano
+abnormal fluid temperature,pressão por produtividade/production pressure,Organizacional
+visual inspection skipped,revisão técnica ausente/technical review missing,Organizacional
+scaffolding improvised or reused,falha estrutural/structural failure,Tecnico
+recurrent minor faults,falha hidráulica/hydraulic failure,Tecnico
+recurrent minor faults,quebra de equipamento/equipment breakdown,Tecnico
+procedure not fully followed,falha operacional/operational failure,Humano
+safety culture complacency,falha na análise de risco/failure in risk assessment,Organizacional
+small leak normalized,falha na análise de risco/failure in risk assessment,Organizacional
+tool left unattended,procedimento desatualizado/outdated procedure,Organizacional
+incomplete job safety analysis,falha estrutural/structural failure,Tecnico
+pressure drop in critical line,ruptura de tubulação/pipe rupture,Tecnico
+recurrent minor faults,pane elétrica/electrical fault,Tecnico
+tool left unattended,equipamento mal calibrado/miscalibrated equipment,Tecnico
+tool left unattended,quebra de equipamento/equipment breakdown,Tecnico
+tool left unattended,falha técnica/tecnical fault,Tecnico
+procedural compliance variable,violação de regra/rule violation,Humano
+safety culture complacency,priorização inadequada/inappropriate prioritization,Organizacional
+safety culture complacency,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+safety checks performed superficially,falha de sensor/sensor failure,Tecnico
+safety culture complacency,defeito crítico no sistema/critical system defect,Tecnico
+early corrosion signs unmonitored,sem inspeção/no inspection,Organizacional
+operational limits repeatedly challenged,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+operational limits repeatedly challenged,manutenção deficiente/poor maintenance,Organizacional
+temporary fix not followed up,perda de contenção/loss of containment,Tecnico
+early corrosion signs unmonitored,deterioração mecânica/mechanical degradation,Tecnico
+early corrosion signs unmonitored,perda de contenção/loss of containment,Tecnico
+operational limits repeatedly challenged,defeito crítico no sistema/critical system defect,Tecnico
+temporary fix not followed up,não seguiu o procedimento/did not follow procedure,Humano
+recurrent minor faults,falha de sensor/sensor failure,Tecnico
+recurrent minor faults,equipamento mal calibrado/miscalibrated equipment,Tecnico
+small leak normalized,falha de isolamento/insulation failure,Tecnico
+recurrent minor faults,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+recurrent minor faults,falha na análise de risco/failure in risk assessment,Organizacional
+abnormal fluid temperature,falha hidráulica/hydraulic failure,Tecnico
+recurrent minor faults,perda de contenção/loss of containment,Tecnico
+sensor drift unnoticed,falha de sensor/sensor failure,Tecnico
+recurrent minor faults,ruptura de tubulação/pipe rupture,Tecnico
+small leak normalized,defeito crítico no sistema/critical system defect,Tecnico
+recurrent alarm acknowledged without investigation,detector coberto/covered detector,Humano
+multiple alarms triggered,detector coberto/covered detector,Humano
+alarms frequently muted,detector coberto/covered detector,Humano
+operational limits repeatedly challenged,descumprimento de procedimento/non compliance with procedure,Humano
+operational limits repeatedly challenged,falha operacional/operational failure,Humano
+crew unaware of recent changes,decisão inadequada/inadequate decision,Humano
+safety checks performed superficially,detector coberto/covered detector,Humano
+delay in acknowledging alarms,detector coberto/covered detector,Humano
+emergency equipment blocked,falha operacional/operational failure,Humano
+equipment not fully isolated,falha operacional/operational failure,Humano
+supervisory fatigue unaddressed,descumprimento de procedimento/non compliance with procedure,Humano
+fatigue ignored by supervision,descumprimento de procedimento/non compliance with procedure,Humano
+hot work without proper monitoring,detector coberto/covered detector,Humano
+hazard label unreadable,erro de julgamento/misjudgment,Humano
+incomplete job safety analysis,violação de regra/rule violation,Humano
+ineffective communication during handover,erro de comunicação verbal/verbal communication error,Humano
+manual action on automated system,descumprimento de procedimento/non compliance with procedure,Humano
+verbal instructions replacing procedures,descumprimento de procedimento/non compliance with procedure,Humano
+recurrent alarm acknowledged without investigation,descumprimento de procedimento/non compliance with procedure,Humano
+recurrent minor faults,erro de julgamento/misjudgment,Humano
+recurring manual reset of safety valve,detector coberto/covered detector,Humano
+recurring manual reset of safety valve,porta deixada aberta/door left open,Humano
+routine inspections delayed,descumprimento de procedimento/non compliance with procedure,Humano
+substandard housekeeping in critical areas,falta de atenção/lack of attention,Humano
+supervisory fatigue unaddressed,falta de atenção/lack of attention,Humano
+substandard housekeeping in critical areas,violação de regra/rule violation,Humano
+recurrent minor faults,manutenção preventiva/preventive maintenance issue,Organizacional
+conflicting operational instructions,revisão técnica ausente/technical review missing,Organizacional
+operational limits repeatedly challenged,revisão técnica ausente/technical review missing,Organizacional
+operational limits repeatedly challenged,procedimento desatualizado/outdated procedure,Organizacional
+conflicting operational instructions,inconsistência em documentação/documentation inconsistency,Organizacional
+delay in acknowledging alarms,falha no planejamento/planning failure,Organizacional
+conflicting operational instructions,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+recurrent alarm acknowledged without investigation,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+crew unaware of recent changes,falha na análise de risco/failure in risk assessment,Organizacional
+conflicting operational instructions,falha na análise de risco/failure in risk assessment,Organizacional
+emergency equipment blocked,sem cronograma/no schedule,Organizacional
+delay in acknowledging alarms,sem briefing/no pre-task briefing,Organizacional
+fatigue ignored by supervision,sem briefing/no pre-task briefing,Organizacional
+fatigue ignored by supervision,sem cronograma/no schedule,Organizacional
+visual inspection skipped,falha na análise de risco/failure in risk assessment,Organizacional
+visual indication ignored,falha na análise de risco/failure in risk assessment,Organizacional
+emergency equipment blocked,manutenção preventiva/preventive maintenance issue,Organizacional
+fatigue ignored by supervision,supervisão inadequada/inadequate supervision,Organizacional
+fatigue ignored by supervision,revisão técnica ausente/technical review missing,Organizacional
+supervisory fatigue unaddressed,falha no planejamento/planning failure,Organizacional
+fatigue ignored by supervision,falha no planejamento/planning failure,Organizacional
+supervisory fatigue unaddressed,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+fatigue ignored by supervision,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+gas detector offline during activity,procedimento desatualizado/outdated procedure,Organizacional
+gas detector offline during activity,revisão técnica ausente/technical review missing,Organizacional
+hazard label unreadable,priorização inadequada/inappropriate prioritization,Organizacional
+hot work without proper monitoring,revisão técnica ausente/technical review missing,Organizacional
+incomplete job safety analysis,treinamento deficiente/poor training,Organizacional
+incomplete job safety analysis,treinamento insuficiente/insufficient training,Organizacional
+unexpected system behavior observed,manutenção preventiva/preventive maintenance issue,Organizacional
+ineffective communication during handover,falha de comunicação/communication failure,Organizacional
+ineffective communication during handover,sem comunicação/lack of communication,Organizacional
+ineffective communication during handover,supervisão inadequada/inadequate supervision,Organizacional
+ineffective communication during handover,priorização inadequada/inappropriate prioritization,Organizacional
+supervisory fatigue unaddressed,priorização inadequada/inappropriate prioritization,Organizacional
+manual action on automated system,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+verbal instructions replacing procedures,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+manual action on automated system,procedimento desatualizado/outdated procedure,Organizacional
+verbal instructions replacing procedures,procedimento desatualizado/outdated procedure,Organizacional
+multiple alarms triggered,sem inspeção/no inspection,Organizacional
+recurrent alarm acknowledged without investigation,revisão técnica ausente/technical review missing,Organizacional
+supervisory fatigue unaddressed,manutenção deficiente/poor maintenance,Organizacional
+operational limits repeatedly challenged,priorização inadequada/inappropriate prioritization,Organizacional
+operational limits repeatedly challenged,treinamento insuficiente/insufficient training,Organizacional
+operator not certified for task,sem briefing/no pre-task briefing,Organizacional
+poorly documented handover,não planejado/unplanned activity,Organizacional
+verbal instructions replacing procedures,procedimento ausente/missing procedure,Organizacional
+recurrent alarm acknowledged without investigation,manutenção preventiva/preventive maintenance issue,Organizacional
+recurrent minor faults,manutenção deficiente/poor maintenance,Organizacional
+recurrent minor faults,inconsistência em documentação/documentation inconsistency,Organizacional
+transient condition disregarded,priorização inadequada/inappropriate prioritization,Organizacional
+recurrent minor faults,priorização inadequada/inappropriate prioritization,Organizacional
+transient condition disregarded,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+recurring manual reset of safety valve,falha no planejamento/planning failure,Organizacional
+recurring manual reset of safety valve,falta de planejamento/lack of planning,Organizacional
+recurring manual reset of safety valve,manutenção preventiva/preventive maintenance issue,Organizacional
+recurring manual reset of safety valve,sem cronograma/no schedule,Organizacional
+recurring manual reset of safety valve,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+routine inspections delayed,revisão técnica ausente/technical review missing,Organizacional
+safety checks performed superficially,procedimento desatualizado/outdated procedure,Organizacional
+routine inspections delayed,procedimento desatualizado/outdated procedure,Organizacional
+safety checks performed superficially,priorização inadequada/inappropriate prioritization,Organizacional
+safety checks performed superficially,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+safety culture complacency,cultura de segurança fraca/weak security culture,Organizacional
+small leak normalized,manutenção deficiente/poor maintenance,Organizacional
+substandard housekeeping in critical areas,priorização inadequada/inappropriate prioritization,Organizacional
+unauthorized modification of settings,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+verbal instructions replacing procedures,ausência de procedimento/absence of procedure,Organizacional
+multiple alarms triggered,equipamento mal calibrado/miscalibrated equipment,Tecnico
+multiple alarms triggered,pane elétrica/electrical fault,Tecnico
+operational limits repeatedly challenged,equipamento mal calibrado/miscalibrated equipment,Tecnico
+operational limits repeatedly challenged,falha técnica/tecnical fault,Tecnico
+crew unaware of recent changes,falha de alarme/alarm failure,Tecnico
+delay in acknowledging alarms,falha de sensor/sensor failure,Tecnico
+routine inspections delayed,falha de alarme/alarm failure,Tecnico
+emergency equipment blocked,defeito crítico no sistema/critical system defect,Tecnico
+equipment not fully isolated,defeito crítico no sistema/critical system defect,Tecnico
+fatigue ignored by supervision,falha estrutural/structural failure,Tecnico
+hot work without proper monitoring,vazamento de gás/gas leak,Tecnico
+hazard label unreadable,perda de contenção/loss of containment,Tecnico
+hazard label unreadable,defeito crítico no sistema/critical system defect,Tecnico
+hazard label unreadable,falha de alarme/alarm failure,Tecnico
+hazard label unreadable,equipamento mal calibrado/miscalibrated equipment,Tecnico
+hazard label unreadable,falha técnica/tecnical fault,Tecnico
+hazard label unreadable,falha de isolamento/insulation failure,Tecnico
+hot work without proper monitoring,equipamento mal calibrado/miscalibrated equipment,Tecnico
+hot work without proper monitoring,falha técnica/tecnical fault,Tecnico
+hot work without proper monitoring,pane elétrica/electrical fault,Tecnico
+improvised action during routine task,equipamento mal calibrado/miscalibrated equipment,Tecnico
+unauthorized access to hazardous zone,pane elétrica/electrical fault,Tecnico
+incomplete job safety analysis,pane elétrica/electrical fault,Tecnico
+unexpected system behavior observed,equipamento mal calibrado/miscalibrated equipment,Tecnico
+minor spill unreported,ruptura de tubulação/pipe rupture,Tecnico
+recurrent alarm acknowledged without investigation,equipamento mal calibrado/miscalibrated equipment,Tecnico
+operational limits repeatedly challenged,quebra de equipamento/equipment breakdown,Tecnico
+supervisory fatigue unaddressed,quebra de equipamento/equipment breakdown,Tecnico
+procedure not fully followed,falha de isolamento/insulation failure,Tecnico
+procedure not fully followed,falha técnica/tecnical fault,Tecnico
+scaffolding improvised or reused,quebra de equipamento/equipment breakdown,Tecnico
+recurrent alarm acknowledged without investigation,perda de contenção/loss of containment,Tecnico
+recurrent minor faults,falha de alarme/alarm failure,Tecnico
+transient condition disregarded,defeito crítico no sistema/critical system defect,Tecnico
+safety checks performed superficially,falha técnica/tecnical fault,Tecnico
+safety culture complacency,perda de contenção/loss of containment,Tecnico
+unauthorized access to hazardous zone,perda de contenção/loss of containment,Tecnico
+shutdown aborted without justification,equipamento mal calibrado/miscalibrated equipment,Tecnico
+small leak normalized,quebra de equipamento/equipment breakdown,Tecnico
+small leak normalized,pane elétrica/electrical fault,Tecnico
+small leak normalized,equipamento mal calibrado/miscalibrated equipment,Tecnico
+substandard housekeeping in critical areas,perda de contenção/loss of containment,Tecnico
+unexpected noise from equipment,quebra de equipamento/equipment breakdown,Tecnico
+unexpected noise from equipment,equipamento mal calibrado/miscalibrated equipment,Tecnico
+unexpected system behavior observed,perda de contenção/loss of containment,Tecnico
+unexpected system behavior observed,falha de isolamento/insulation failure,Tecnico
+operational limits repeatedly challenged,manutenção preventiva/preventive maintenance issue,Organizacional
+abnormal fluid temperature,falha de alarme/alarm failure,Tecnico
+small leak normalized,falha de alarme/alarm failure,Tecnico
+alarm deactivated by habit,falha de alarme/alarm failure,Tecnico
+safety checks performed superficially,quebra de equipamento/equipment breakdown,Tecnico
+operational limits repeatedly challenged,falha hidráulica/hydraulic failure,Tecnico
+temporary bypass in place,perda de contenção/loss of containment,Tecnico
+unusual odor in process area,vazamento de gás/gas leak,Tecnico
+unusual odor in process area,falha hidráulica/hydraulic failure,Tecnico
+supervisory fatigue unaddressed,sem briefing/no pre-task briefing,Organizacional
+recurrent minor faults,supervisão inadequada/inadequate supervision,Organizacional
+unexpected system behavior observed,supervisão inadequada/inadequate supervision,Organizacional
+improvised action during routine task,sem briefing/no pre-task briefing,Organizacional
+operational limits repeatedly challenged,falha na análise de risco/failure in risk assessment,Organizacional
+substandard housekeeping in critical areas,pressão por produtividade/production pressure,Organizacional
+safety checks performed superficially,falha de alarme/alarm failure,Tecnico
+incomplete job safety analysis,falha de alarme/alarm failure,Tecnico
+safety checks performed superficially,perda de contenção/loss of containment,Tecnico
+recurrent minor faults,descumprimento de procedimento/non compliance with procedure,Humano
+unexpected system behavior observed,falha na análise de risco/failure in risk assessment,Organizacional
+recurring manual reset of safety valve,revisão técnica ausente/technical review missing,Organizacional
+unexpected system behavior observed,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+abnormal equipment noise undocumented,quebra de equipamento/equipment breakdown,Tecnico
+abnormal equipment noise undocumented,equipamento mal calibrado/miscalibrated equipment,Tecnico
+fatigue ignored by supervision,equipamento mal calibrado/miscalibrated equipment,Tecnico
+degraded sensor performance,equipamento mal calibrado/miscalibrated equipment,Tecnico
+degraded sensor performance,quebra de equipamento/equipment breakdown,Tecnico
+equipment not fully isolated,falha de sensor/sensor failure,Tecnico
+equipment not fully isolated,pane elétrica/electrical fault,Tecnico
+recurring manual reset of safety valve,pane elétrica/electrical fault,Tecnico
+unexpected system behavior observed,deterioração mecânica/mechanical degradation,Tecnico
+unexpected system behavior observed,quebra de equipamento/equipment breakdown,Tecnico
+unexpected system behavior observed,pane elétrica/electrical fault,Tecnico
+hot work without proper monitoring,descumprimento de procedimento/non compliance with procedure,Humano
+incomplete job safety analysis,erro de julgamento/misjudgment,Humano
+operator not certified for task,descumprimento de procedimento/non compliance with procedure,Humano
+routine inspections delayed,detector coberto/covered detector,Humano
+small leak normalized,objeto derrubado/dropped object,Humano
+visual indication ignored,não seguiu o procedimento/did not follow procedure,Humano
+hot work without proper monitoring,procedimento desatualizado/outdated procedure,Organizacional
+manual action on automated system,manutenção preventiva/preventive maintenance issue,Organizacional
+incomplete job safety analysis,supervisão inadequada/inadequate supervision,Organizacional
+recurrent minor faults,revisão técnica ausente/technical review missing,Organizacional
+safety signs missing or faded,falha na análise de risco/failure in risk assessment,Organizacional
+visual indication ignored,revisão técnica ausente/technical review missing,Organizacional
+abnormal fluid temperature,equipamento mal calibrado/miscalibrated equipment,Tecnico
+incomplete job safety analysis,deterioração mecânica/mechanical degradation,Tecnico
+unexpected system behavior observed,falha de alarme/alarm failure,Tecnico
+unexpected system behavior observed,pressurização indevida/unintended pressurization,Tecnico
+routine deviation accepted,violação de regra/rule violation,Humano
+routine deviation accepted,descumprimento de procedimento/non compliance with procedure,Humano
+degraded sensor performance,procedimento desatualizado/outdated procedure,Organizacional
+safety checks performed superficially,treinamento deficiente/poor training,Organizacional
+visual inspection skipped,falha de sensor/sensor failure,Tecnico
+routine inspections delayed,equipamento mal calibrado/miscalibrated equipment,Tecnico
+procedure not fully followed,falha de sensor/sensor failure,Tecnico
+provisional scaffolding reused,quebra de equipamento/equipment breakdown,Tecnico
+visual indication ignored,falha de sensor/sensor failure,Tecnico
+visual indication ignored,falha de vedação/seal failure,Tecnico
+small leak normalized,revisão técnica ausente/technical review missing,Organizacional
+recurring manual reset of safety valve,falha de alarme/alarm failure,Tecnico
+emergency equipment blocked,perda de contenção/loss of containment,Tecnico
+small leak normalized,porta deixada aberta/door left open,Humano
+improvised action during routine task,gestão de mudanças ineficaz/ineffective management of change,Organizacional
+safety culture complacency,equipamento mal calibrado/miscalibrated equipment,Tecnico
+recurrent minor faults,deterioração mecânica/mechanical degradation,Tecnico
+unexpected noise from equipment,falha técnica/tecnical fault,Tecnico

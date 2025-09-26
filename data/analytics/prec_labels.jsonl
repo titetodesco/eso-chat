@@ -1,0 +1,54 @@
+{"label": "ausência de procedimento/absence of procedure", "hto": "Organizacional"}
+{"label": "cultura de segurança fraca/weak security culture", "hto": "Organizacional"}
+{"label": "decisão inadequada/inadequate decision", "hto": "Humano"}
+{"label": "defeito crítico no sistema/critical system defect", "hto": "Tecnico"}
+{"label": "descumprimento de procedimento/non compliance with procedure", "hto": "Humano"}
+{"label": "detector coberto/covered detector", "hto": "Humano"}
+{"label": "deterioração mecânica/mechanical degradation", "hto": "Tecnico"}
+{"label": "equipamento mal calibrado/miscalibrated equipment", "hto": "Tecnico"}
+{"label": "erro de comunicação verbal/verbal communication error", "hto": "Humano"}
+{"label": "erro de julgamento/misjudgment", "hto": "Humano"}
+{"label": "erro humano/human error", "hto": "Humano"}
+{"label": "falha de alarme/alarm failure", "hto": "Tecnico"}
+{"label": "falha de comunicação/communication failure", "hto": "Organizacional"}
+{"label": "falha de isolamento/insulation failure", "hto": "Tecnico"}
+{"label": "falha de sensor/sensor failure", "hto": "Tecnico"}
+{"label": "falha de vedação/seal failure", "hto": "Tecnico"}
+{"label": "falha estrutural/structural failure", "hto": "Tecnico"}
+{"label": "falha hidráulica/hydraulic failure", "hto": "Tecnico"}
+{"label": "falha na análise de risco/failure in risk assessment", "hto": "Organizacional"}
+{"label": "falha no planejamento/planning failure", "hto": "Organizacional"}
+{"label": "falha operacional/operational failure", "hto": "Humano"}
+{"label": "falha técnica/tecnical fault", "hto": "Tecnico"}
+{"label": "falta de atenção/lack of attention", "hto": "Humano"}
+{"label": "falta de concentração/lack of concentration", "hto": "Humano"}
+{"label": "falta de planejamento/lack of planning", "hto": "Organizacional"}
+{"label": "gestão de mudanças ineficaz/ineffective management of change", "hto": "Organizacional"}
+{"label": "inconsistência em documentação/documentation inconsistency", "hto": "Organizacional"}
+{"label": "manutenção deficiente/poor maintenance", "hto": "Organizacional"}
+{"label": "manutenção preventiva/preventive maintenance issue", "hto": "Organizacional"}
+{"label": "não estava usando/not wearing", "hto": "Humano"}
+{"label": "não planejado/unplanned activity", "hto": "Organizacional"}
+{"label": "não seguiu o procedimento/did not follow procedure", "hto": "Humano"}
+{"label": "objeto derrubado/dropped object", "hto": "Humano"}
+{"label": "pane elétrica/electrical fault", "hto": "Tecnico"}
+{"label": "perda de contenção/loss of containment", "hto": "Tecnico"}
+{"label": "porta deixada aberta/door left open", "hto": "Humano"}
+{"label": "pressurização indevida/unintended pressurization", "hto": "Tecnico"}
+{"label": "pressão por produtividade/production pressure", "hto": "Organizacional"}
+{"label": "priorização inadequada/inappropriate prioritization", "hto": "Organizacional"}
+{"label": "procedimento ausente/missing procedure", "hto": "Organizacional"}
+{"label": "procedimento desatualizado/outdated procedure", "hto": "Organizacional"}
+{"label": "quebra de equipamento/equipment breakdown", "hto": "Tecnico"}
+{"label": "revisão técnica ausente/technical review missing", "hto": "Organizacional"}
+{"label": "ruptura de tubulação/pipe rupture", "hto": "Tecnico"}
+{"label": "sem briefing/no pre-task briefing", "hto": "Organizacional"}
+{"label": "sem comunicação/lack of communication", "hto": "Organizacional"}
+{"label": "sem cronograma/no schedule", "hto": "Organizacional"}
+{"label": "sem inspeção/no inspection", "hto": "Organizacional"}
+{"label": "sem procedimento/no procedure", "hto": "Organizacional"}
+{"label": "supervisão inadequada/inadequate supervision", "hto": "Organizacional"}
+{"label": "treinamento deficiente/poor training", "hto": "Organizacional"}
+{"label": "treinamento insuficiente/insufficient training", "hto": "Organizacional"}
+{"label": "vazamento de gás/gas leak", "hto": "Tecnico"}
+{"label": "violação de regra/rule violation", "hto": "Humano"}
