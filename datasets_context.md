@@ -34,8 +34,7 @@ datasets:
       role: labels_ws
       label_column_pt: "Termo (PT)"
       label_column_en: "Termo (EN)"
-      # dica: durante a criação de embeddings, você pode optar por PT, EN ou
-      # uma fusão PT+EN (concatenar termos).
+      # dica: durante a criação de embeddings, você pode optar por PT, EN ou uma fusão PT+EN (concatenar termos).
 
   # -------------------------------------------------------------------
   # PRECURSORES (EXPANDIDO)
