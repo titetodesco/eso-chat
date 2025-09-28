@@ -33,6 +33,62 @@ except Exception:
 
 
 st.set_page_config(page_title="ESO • CHAT (HIST + UPLD)", page_icon="💬", layout="wide")
+# --- PATCH: inicialização segura para índices de histórico em memória ---
+
+# 1) Garante estrutura no session_state
+if "hist_idx" not in st.session_state:
+    # cada item: {"vectorizer":..., "matrix":..., "text_col":..., "rows":...}
+    st.session_state.hist_idx = {"sphera": None, "gosee": None, "docs": None}
+
+# 2) Função utilitária para construir TF-IDF (igual ao que usamos para uploads)
+def _build_tfidf_from_texts(texts, n_features=50000):
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    texts = ["" if t is None or (isinstance(t, float) and np.isnan(t)) else str(t) for t in texts]
+    vec = TfidfVectorizer(lowercase=True, strip_accents="unicode",
+                          analyzer="word", ngram_range=(1,2),
+                          max_features=n_features)
+    X = vec.fit_transform(texts)
+    return vec, X
+
+# 3) Inicializa listas vazias para evitar NameError
+sph_texts, go_texts, hist_texts = [], [], []
+
+# 4) Fallback opcional: só constrói em memória se NÃO carregou os joblibs prontos
+#    (mantém prioridade para os índices pré-gerados via make_catalog_indexes.py)
+try:
+    # estes objetos devem existir no escopo se você carregou os .joblib/.parquet
+    have_sphera_joblib = ("sphera_j" in globals()) and (sphera_j is not None)
+    have_gosee_joblib  = ("gosee_j"  in globals()) and (gosee_j  is not None)
+    have_hist_joblib   = ("hist_j"   in globals()) and (hist_j   is not None)
+
+    # Sphera: se não há joblib, mas há dataframe, constrói TF-IDF em memória
+    if (not have_sphera_joblib) and ("sphera_df" in globals()) and (sphera_df is not None) \
+       and (st.session_state.hist_idx["sphera"] is None):
+        # escolha de coluna padrão quando não há joblib dizendo qual é:
+        text_col = "DESCRIPTION" if "DESCRIPTION" in sphera_df.columns else sphera_df.columns[0]
+        sph_texts = sphera_df[text_col].astype(str).fillna("").tolist()
+        vec, X = _build_tfidf_from_texts(sph_texts)
+        st.session_state.hist_idx["sphera"] = {"vectorizer": vec, "matrix": X, "text_col": text_col, "rows": None}
+
+    # GoSee: idem
+    if (not have_gosee_joblib) and ("gosee_df" in globals()) and (gosee_df is not None) \
+       and (st.session_state.hist_idx["gosee"] is None):
+        text_col = "Observation" if "Observation" in gosee_df.columns else gosee_df.columns[0]
+        go_texts = gosee_df[text_col].astype(str).fillna("").tolist()
+        vec, X = _build_tfidf_from_texts(go_texts)
+        st.session_state.hist_idx["gosee"] = {"vectorizer": vec, "matrix": X, "text_col": text_col, "rows": None}
+
+    # Docs (history_texts.jsonl): idem
+    if (not have_hist_joblib) and ("history_rows" in globals()) and history_rows \
+       and (st.session_state.hist_idx["docs"] is None):
+        hist_texts = [str(r.get("text","")) for r in history_rows]
+        vec, X = _build_tfidf_from_texts(hist_texts)
+        st.session_state.hist_idx["docs"] = {"vectorizer": vec, "matrix": X, "text_col": "text", "rows": history_rows}
+except Exception as _e:
+    # não bloqueia a app por causa do fallback; só registra no log server
+    print("[hist-fallback] aviso:", repr(_e))
+
+
 
 # -------------------------
 # Configs / Secrets
