@@ -57,6 +57,34 @@ DATASETS_CONTEXT_FILE = "datasets_context.md"  # YAML em markdown (conteúdo pur
 # -------------------------
 # Carrega HIST (pré-indexado)
 # -------------------------
+# ---- Cache helpers ----
+@st.cache_resource(show_spinner=False)
+def _load_parquet_cached(path: str):
+    return pd.read_parquet(path)
+
+@st.cache_resource(show_spinner=False)
+def _load_jsonl_cached(path: str):
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            rows.append(json.loads(line))
+    return rows
+
+@st.cache_resource(show_spinner=False)
+def _load_joblib_cached(path: str):
+    if joblib is None:
+        return None
+    return joblib.load(path)
+
+@st.cache_resource(show_spinner=False)
+def _load_text_cached(path: str):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+
 def load_joblib_any(*candidates):
     for p in candidates:
         if os.path.exists(p):
