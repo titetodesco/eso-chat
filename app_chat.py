@@ -8,11 +8,7 @@
 import os
 import io
 import json
-# no topo
-try:
-    import joblib
-except Exception:
-    joblib = None
+import joblib
 import requests
 import numpy as np
 import pandas as pd
@@ -55,10 +51,6 @@ DATASETS_CONTEXT_FILE = "datasets_context.md"  # YAML em markdown (conteúdo pur
 # Carrega HIST (pré-indexado)
 # -------------------------
 def load_joblib_any(*candidates):
-    if joblib is None:
-        st.warning("joblib não instalado — desativando busca do HIST (Spheracloud/GoSee/Docs). "
-                   "Adicione 'joblib' e 'scikit-learn' ao requirements.txt para habilitar.")
-        return None
     for p in candidates:
         if os.path.exists(p):
             try:
