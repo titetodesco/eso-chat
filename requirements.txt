@@ -5,7 +5,10 @@ numpy
 pyarrow
 pypdf
 python-docx
+xlsxwriter==3.2.0
+# Para carregar os .joblib (TF-IDF do scikit-learn)
 joblib==1.4.2
 scikit-learn==1.5.1
-scipy
-xlsxwriter==3.2.0
+scipy==1.13.1
+
+
