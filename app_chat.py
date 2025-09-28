@@ -57,6 +57,97 @@ DATASETS_CONTEXT_FILE = "datasets_context.md"  # YAML em markdown (conteúdo pur
 # -------------------------
 # Carrega HIST (pré-indexado)
 # -------------------------
+
+# === PATCH: índices TF-IDF leves para HIST (Sphera/GoSee/Docs) ===
+# Reaproveita as funções tfidf_fit, tfidf_transform, cosine_sim já existentes no app.
+
+if "hist_idx" not in st.session_state:
+    st.session_state.hist_idx = {
+        "sphera": None,  # dict: {"texts": [...], "vocab":..., "idf":..., "X":...}
+        "gosee":  None,
+        "hist":   None,
+    }
+
+def build_hist_index(name, texts_list):
+    # texts_list: lista de strings (por ex., lidas de sphera_texts.jsonl)
+    texts = [t if isinstance(t, str) else "" for t in texts_list]
+    # Remover vazios
+    texts = [t for t in texts if t.strip()]
+    if not texts:
+        return None
+    vocab, idf, X = tfidf_fit(texts)
+    return {"texts": texts, "vocab": vocab, "idf": idf, "X": X}
+
+# Construção dos índices, apenas 1x por sessão
+if st.session_state.hist_idx["sphera"] is None and sph_texts:
+    st.session_state.hist_idx["sphera"] = build_hist_index("sphera", sph_texts)
+if st.session_state.hist_idx["gosee"] is None and gos_texts:
+    st.session_state.hist_idx["gosee"]  = build_hist_index("gosee", gos_texts)
+if st.session_state.hist_idx["hist"] is None and hist_texts:
+    st.session_state.hist_idx["hist"]   = build_hist_index("hist", hist_texts)
+
+def search_hist_tfidf(query_text: str, topk_hist: int, thr_hist: float):
+    """Busca TF-IDF (leve) nos índices HIST (sphera/gosee/hist)."""
+    out_blocks = []
+
+    def do_search(tag, idx):
+        if not idx: 
+            return
+        qX = tfidf_transform([query_text], idx["vocab"], idx["idf"])
+        sims = cosine_sim(qX, idx["X"])[0]
+        order = np.argsort(-sims)
+        seen_snippets = set()
+        for i in order[: max(50, topk_hist*4)]:
+            s = float(sims[i])
+            if s < thr_hist:
+                continue
+            t = idx["texts"][i]
+            # desduplicação simples por texto normalizado
+            key = t.strip().lower()
+            if key in seen_snippets:
+                continue
+            seen_snippets.add(key)
+            out_blocks.append((s, f"[{tag}/{i}] (sim={s:.3f})\n{t}"))
+
+    do_search("Sphera", st.session_state.hist_idx["sphera"])
+    do_search("GoSee",  st.session_state.hist_idx["gosee"])
+    do_search("Docs",   st.session_state.hist_idx["hist"])
+
+    out_blocks.sort(key=lambda x: -x[0])
+    return [b for _, b in out_blocks[:topk_hist]]
+
+# === PATCH: extrair consulta automática a partir do upload ===
+def get_upload_query_text(max_chars=3000):
+    """Monta uma consulta a partir dos melhores chunks do upload para usar no HIST.
+       Se não houver upload indexado, retorna string vazia."""
+    texts = st.session_state.upld.get("texts") or []
+    metas = st.session_state.upld.get("metas") or []
+    vocab = st.session_state.upld.get("vocab")
+    idf   = st.session_state.upld.get("idf")
+    X     = st.session_state.upld.get("X")
+    if not texts or vocab is None or idf is None or X is None:
+        return ""
+    # Usamos o último prompt do usuário como "semente" para ranquear os chunks e pegar os top-3
+    # (se quiser, pode usar outra estratégia: últimos N chunks, ou tudo junto).
+    seed = st.session_state.chat[-1]["content"] if st.session_state.chat else ""
+    if not seed:
+        seed = "resumo do conteúdo do upload"
+    qX = tfidf_transform([seed], vocab, idf)
+    sims = cosine_sim(qX, X)[0]
+    order = np.argsort(-sims)
+    top_idxs = order[:3]  # pega até 3 trechos mais relevantes
+    buf = []
+    total = 0
+    for i in top_idxs:
+        t = texts[i]
+        if total + len(t) > max_chars:
+            t = t[: max(0, max_chars-total)]
+        buf.append(t)
+        total += len(t)
+        if total >= max_chars:
+            break
+    return "\n\n".join(buf).strip()
+
 # ---- Cache helpers ----
 @st.cache_resource(show_spinner=False)
 def _load_parquet_cached(path: str):
@@ -449,7 +540,16 @@ if prompt:
 
     # Recuperação combinada
     up_blocks = search_upload(prompt, topk_upload=topk_upload, thr_upload=thr_upload)
-    hi_blocks = search_hist(prompt,   topk_hist=topk_hist,       thr_hist=thr_hist)
+    # 1) Busca em UPLOAD pela pergunta do usuário
+    up_blocks = search_upload(prompt, topk_upload=topk_upload, thr_upload=thr_upload)
+    
+    # 2) Se houver upload, gera uma CONSULTA baseada no próprio upload para HIST
+    upload_query = get_upload_query_text()  # usa top-chunks do upload
+    hist_query = upload_query if upload_query else prompt
+    
+    # 3) Busca HIST com TF-IDF leve usando a 'hist_query'
+    hi_blocks = search_hist_tfidf(hist_query, topk_hist=topk_hist, thr_hist=thr_hist)
+    
 
     # Combinação com pesos (nota: servem para ordenação; cada bloco já traz sim do seu domínio)
     combined = []
