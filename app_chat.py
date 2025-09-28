@@ -47,6 +47,69 @@ DATASETS_CONTEXT_FILE = "datasets_context.md"  # YAML em markdown (conteúdo pur
 # -------------------------
 # Utilitários
 # -------------------------
+# -------------------------
+# Carrega HIST (pré-indexado)
+# -------------------------
+def load_joblib_any(*candidates):
+    for p in candidates:
+        if os.path.exists(p):
+            try:
+                return joblib.load(p)
+            except Exception as e:
+                st.warning(f"Não consegui carregar {p}: {e}")
+    return None
+
+def read_parquet_any(*candidates):
+    for p in candidates:
+        if os.path.exists(p):
+            try:
+                return pd.read_parquet(p)
+            except Exception as e:
+                st.warning(f"Falha ao ler {p}: {e}")
+    return None
+
+# caminhos base
+sphera_parquet_candidates = [
+    os.path.join(ANALYTICS_DIR, "spheracloud.parquet"),
+    os.path.join(ANALYTICS_DIR, "sphera.parquet"),
+]
+sphera_tfidf_candidates = [
+    os.path.join(ANALYTICS_DIR, "spheracloud.tfidf.joblib"),
+    os.path.join(ANALYTICS_DIR, "sphera_tfidf.joblib"),
+]
+
+gosee_parquet_candidates = [
+    os.path.join(ANALYTICS_DIR, "gosee.parquet"),
+]
+gosee_tfidf_candidates = [
+    os.path.join(ANALYTICS_DIR, "gosee.tfidf.joblib"),
+]
+
+hist_texts_path = os.path.join(ANALYTICS_DIR, "history_texts.jsonl")
+hist_tfidf_candidates = [
+    os.path.join(ANALYTICS_DIR, "history_tfidf.joblib"),
+]
+
+# carrega joblibs
+sphera_j = load_joblib_any(*sphera_tfidf_candidates)
+gosee_j  = load_joblib_any(*gosee_tfidf_candidates)
+hist_j   = load_joblib_any(*hist_tfidf_candidates)
+
+# carrega dataframes
+sphera_df = read_parquet_any(*sphera_parquet_candidates)
+gosee_df  = read_parquet_any(*gosee_parquet_candidates)
+
+# carrega histórico (jsonl)
+history_rows = []
+if os.path.exists(hist_texts_path):
+    try:
+        with open(hist_texts_path, "r", encoding="utf-8") as f:
+            for line in f:
+                history_rows.append(json.loads(line))
+    except Exception as e:
+        st.warning(f"Falha ao ler history_texts.jsonl: {e}")
+
+
 def read_pdf_bytes(b: bytes) -> str:
     if pypdf is None:
         raise RuntimeError("pypdf não instalado (adicione em requirements).")
