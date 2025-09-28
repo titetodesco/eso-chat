@@ -8,11 +8,17 @@
 import os
 import io
 import json
-import joblib
+import time  # <-- NOVO
 import requests
 import numpy as np
 import pandas as pd
 import streamlit as st
+
+# joblib opcional: se não estiver instalado, HIST fica desativado
+try:
+    import joblib  # noqa
+except Exception:
+    joblib = None
 
 # Parsers leves (apenas para uploads)
 try:
@@ -24,6 +30,7 @@ try:
     import docx
 except Exception:
     docx = None
+
 
 st.set_page_config(page_title="ESO • CHAT (HIST + UPLD)", page_icon="💬", layout="wide")
 
