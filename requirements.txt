@@ -1,21 +1,21 @@
-# Streamlit
-streamlit==1.50.0
-requests==2.32.3
-
-# Núcleo de dados (versões com wheel estável)
+# --- Core runtime (fixa Python wheels estáveis) ---
 numpy==1.26.4
 pandas==2.2.2
 pyarrow==15.0.2
 scikit-learn==1.4.2
+requests==2.32.3
+streamlit==1.50.0
 
-# Leitura de arquivos
+# --- Upload parsers ---
 pypdf==4.2.0
 python-docx==1.1.0
 
-# Embeddings (Sentence-Transformers) + Torch CPU
+# --- Embeddings (CPU) ---
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.2.2+cpu
+
 transformers==4.41.2
 sentence-transformers==3.0.1
 huggingface-hub==0.22.2
 tqdm==4.66.4
+
