@@ -435,3 +435,25 @@ with st.expander("📦 Status dos índices", expanded=False):
         st.write(f" • shape: {E_his.shape} | chunks: {len(rows_his)}")
     st.write("Uploads indexados:", len(st.session_state.upld_texts))
     st.write("Encoder ativo    :", ST_MODEL_NAME)
+
+with st.expander("🔎 Versões dos pacotes"):
+    import importlib, sys
+    pkgs = [
+        ("torch", "torch"),
+        ("transformers", "transformers"),
+        ("sentence-transformers", "sentence_transformers"),
+        ("pandas", "pandas"),
+        ("numpy", "numpy"),
+        ("pyarrow", "pyarrow"),
+        ("pypdf", "pypdf"),
+        ("python-docx", "docx"),
+        ("scikit-learn", "sklearn"),
+    ]
+    st.write("Python:", sys.version)
+    for disp, mod in pkgs:
+        try:
+            m = importlib.import_module(mod)
+            ver = getattr(m, "__version__", "sem __version__")
+            st.write(f"{disp}: {ver}")
+        except Exception as e:
+            st.write(f"{disp}: não instalado ({e})")
