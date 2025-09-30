@@ -1,21 +1,24 @@
-# --- Core runtime (fixa Python wheels estáveis) ---
+# --- base ---
+streamlit==1.50.0
+requests==2.32.3
+
+# wheels estáveis para Py3.11 em Linux (evitam build demorado)
 numpy==1.26.4
 pandas==2.2.2
 pyarrow==15.0.2
-scikit-learn==1.4.2
-requests==2.32.3
-streamlit==1.50.0
 
-# --- Upload parsers ---
+# parsing de arquivos
 pypdf==4.2.0
 python-docx==1.1.0
 
-# --- Embeddings (CPU) ---
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.2.2+cpu
+# ML local p/ embeddings de consulta
+scikit-learn==1.4.2
+scipy==1.13.1
+joblib==1.4.2
 
+# Sentence-Transformers (compatíveis entre si em Py3.11)
+torch==2.3.1
 transformers==4.41.2
 sentence-transformers==3.0.1
-huggingface-hub==0.22.2
+huggingface-hub==0.23.5
 tqdm==4.66.4
-
