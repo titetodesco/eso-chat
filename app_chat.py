@@ -1,48 +1,20 @@
 # app_chat.py
-# ESO • CHAT — HIST + UPLD (Embeddings preferencial; TF-IDF como fallback)
-# - HIST: Sphera, GoSee, Docs
-#   • Preferir embeddings (*.npz) + encoder (Sentence-Transformers OU ONNX local)
-#   • Se encoder indisponível: cair para TF-IDF pré-gerado (*.joblib)
-# - UPLD: arquivos enviados no momento (TF-IDF local)
-# - Combina resultados (pesos) e injeta no prompt
-# - Injeta datasets_context.md (opcional)
+# ESO • CHAT — HIST + UPLD (APENAS EMBEDDINGS)
+# - Carrega embeddings pré-gerados (Sphera/GoSee/Docs/WS/Prec/CP) de data/analytics/*.npz
+# - Gera embeddings para UPLOADs em sessão (Sentence-Transformers)
+# - Busca por similaridade (cosine) e injeta trechos como contexto para o LLM
+# - NENHUM TF-IDF. Sem joblib/sklearn.
+# - Requer: sentence-transformers instalado. (Usa o mesmo modelo dos seus .npz)
 
 import os
 import io
 import json
-import time
 import requests
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-# === Dependências opcionais ===
-try:
-    import joblib
-except Exception:
-    joblib = None
-
-# Encoders possíveis para embeddings
-_HAS_ST = False      # sentence-transformers
-_HAS_ORT = False     # onnxruntime + transformers (tokenizer)
-_ST_MODEL = None
-_ONNX_SESS = None
-_ONNX_TOK = None
-
-try:
-    from sentence_transformers import SentenceTransformer
-    _HAS_ST = True
-except Exception:
-    _HAS_ST = False
-
-try:
-    import onnxruntime as ort
-    from transformers import AutoTokenizer
-    _HAS_ORT = True
-except Exception:
-    _HAS_ORT = False
-
-# Parsers leves (apenas para uploads)
+# ---- Leitores leves (upload) ----
 try:
     import pypdf
 except Exception:
@@ -53,25 +25,44 @@ try:
 except Exception:
     docx = None
 
-st.set_page_config(page_title="ESO • CHAT (Embeddings + TF-IDF fallback)", page_icon="💬", layout="wide")
+# ---- Encoder (ST) ----
+try:
+    from sentence_transformers import SentenceTransformer
+except Exception as e:
+    raise RuntimeError(
+        "sentence-transformers não está instalado. "
+        "Instale-o no ambiente do app para usar apenas embeddings."
+    )
+
+st.set_page_config(page_title="ESO • CHAT — (Embeddings Only)", page_icon="💬", layout="wide")
 
 # -------------------------
-# Configs / Secrets
+# Config / Paths
 # -------------------------
+DATA_DIR = "data"
+AN_DIR   = os.path.join(DATA_DIR, "analytics")
+
+EMB_SPH = os.path.join(AN_DIR, "sphera_embeddings.npz")
+EMB_GOS = os.path.join(AN_DIR, "gosee_embeddings.npz")
+EMB_HIS = os.path.join(AN_DIR, "history_embeddings.npz")
+EMB_WS  = os.path.join(AN_DIR, "ws_embeddings.npz")
+EMB_PRE = os.path.join(AN_DIR, "prec_embeddings.npz")
+EMB_CP  = os.path.join(AN_DIR, "cp_embeddings.npz")
+
+PQ_SPH  = os.path.join(AN_DIR, "sphera.parquet")
+PQ_GOS  = os.path.join(AN_DIR, "gosee.parquet")
+HIS_JSON= os.path.join(AN_DIR, "history_texts.jsonl")
+
+CATALOG_FILE = "datasets_context.md"  # opcional (texto)
+
+# LLM (Ollama/OpenAI-compat)
 OLLAMA_HOST  = st.secrets.get("OLLAMA_HOST", os.getenv("OLLAMA_HOST", "https://ollama.com"))
 OLLAMA_MODEL = st.secrets.get("OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "gpt-oss:20b"))
 OLLAMA_API_KEY = st.secrets.get("OLLAMA_API_KEY", os.getenv("OLLAMA_API_KEY", None))
-
-HEADERS_JSON = {"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else {}
-
-DATA_DIR = "data"
-ANALYTICS_DIR = os.path.join(DATA_DIR, "analytics")
-DATASETS_CONTEXT_FILE = "datasets_context.md"  # texto (YAML em markdown está OK)
-
-MODELS_ONNX_DIR = "models/all-MiniLM-L6-v2-onnx"  # se existir "model.onnx" + tokenizer.*
+HEADERS_JSON = {"Authorization": f"Bearer {OLLAMA_API_KEY}", "Content-Type": "application/json"} if OLLAMA_API_KEY else {"Content-Type":"application/json"}
 
 # -------------------------
-# Utilitários
+# Utils
 # -------------------------
 def read_pdf_bytes(b: bytes) -> str:
     if pypdf is None:
@@ -130,68 +121,55 @@ def chunk_text(text: str, max_chars=1200, overlap=200):
         start = max(0, end - ov)
     return [p for p in parts if p]
 
-def cosine_sim_dense(A: np.ndarray, B: np.ndarray) -> np.ndarray:
-    # A:(n,d) B:(m,d) -> (n,m)
-    if A.size == 0 or B.size == 0:
-        return np.zeros((A.shape[0], B.shape[0]), dtype=np.float32)
-    a = A.astype(np.float32)
-    b = B.astype(np.float32)
-    a /= (np.linalg.norm(a, axis=1, keepdims=True) + 1e-9)
-    b /= (np.linalg.norm(b, axis=1, keepdims=True) + 1e-9)
-    return a @ b.T
+def l2n(M: np.ndarray) -> np.ndarray:
+    M = M.astype(np.float32, copy=False)
+    n = np.linalg.norm(M, axis=1, keepdims=True) + 1e-9
+    return M / n
 
-def ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False, timeout=120):
-    if not OLLAMA_API_KEY:
-        # Permite rodar sem chave (ambiente local) — server pode estar aberto
-        pass
-    payload = {"model": model, "messages": messages, "temperature": float(temperature), "stream": bool(stream)}
-    r = requests.post(f"{OLLAMA_HOST}/api/chat", headers={**HEADERS_JSON, "Content-Type": "application/json"}, json=payload, timeout=timeout)
-    r.raise_for_status()
-    return r.json()
-
-# ==== Loader robusto para embeddings .npz ====
-def load_embeddings_npz(path):
-    """
-    Carrega um .npz de embeddings de forma defensiva.
-    Retorna dict: {"E": np.ndarray (n,d) float32 L2-normalizada}
-    """
-    if not os.path.exists(path):
-        return None
-    try:
-        with np.load(path, allow_pickle=True) as npz:
-            keys = list(npz.keys())
-            cand = None
-            for k in ("embeddings", "E", "X", "vecs", "vectors"):
-                if k in npz:
-                    cand = k
-                    break
-            if cand is None:
-                # fallback: pega maior matriz 2D
-                best_k, best_n = None, -1
-                for k in keys:
-                    arr = npz[k]
-                    if isinstance(arr, np.ndarray) and arr.ndim == 2 and arr.shape[0] > best_n:
-                        best_k, best_n = k, arr.shape[0]
-                if best_k is None:
-                    raise RuntimeError(f"Nenhuma matriz 2D encontrada em {path}. Chaves: {keys}")
-                cand = best_k
-            E = np.array(npz[cand])
-            E = E.astype(np.float32, copy=False)
-            norms = np.linalg.norm(E, axis=1, keepdims=True) + 1e-9
-            E = E / norms
-            return {"E": E}
-    except Exception as e:
-        st.warning(f"Falha ao ler {path}: {e}")
-        return None
-
-def topk_by_cosine(E_db: np.ndarray, q: np.ndarray, k: int = 5):
-    if E_db is None or q is None:
+def cos_topk(E_db: np.ndarray, q: np.ndarray, k: int) -> list[tuple[int,float]]:
+    if E_db is None or q is None or E_db.size == 0:
         return []
     q = q.astype(np.float32, copy=False)
     q = q / (np.linalg.norm(q) + 1e-9)
     sims = E_db @ q  # (n,)
     idx = np.argsort(-sims)[:k]
-    return list(zip(idx, sims[idx]))
+    return [(int(i), float(sims[i])) for i in idx]
+
+def load_embeddings_npz(path):
+    """
+    Espera arquivos produzidos pelo make_catalog_embeddings.py:
+      keys: 'embeddings' (float32 L2), 'ids' (object), 'texts' (object)
+    Carrega defensivamente se alguma chave faltar.
+    """
+    if not os.path.exists(path):
+        return None
+    try:
+        z = np.load(path, allow_pickle=True)
+        keys = set(z.keys())
+        if "embeddings" not in keys:
+            # tenta achar alguma 2D
+            best_k, best_n = None, -1
+            for k in z.keys():
+                arr = z[k]
+                if isinstance(arr, np.ndarray) and arr.ndim == 2 and arr.shape[0] > best_n:
+                    best_k, best_n = k, arr.shape[0]
+            E = z[best_k].astype(np.float32)
+        else:
+            E = z["embeddings"].astype(np.float32)
+        # normaliza por segurança
+        E = l2n(E)
+        ids   = z["ids"]   if "ids"   in keys else np.arange(E.shape[0], dtype=object)
+        texts = z["texts"] if "texts" in keys else np.array([""]*E.shape[0], dtype=object)
+        return {"E": E, "ids": ids, "texts": texts}
+    except Exception as e:
+        st.warning(f"Falha ao ler {path}: {e}")
+        return None
+
+def ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False, timeout=120):
+    payload = {"model": model, "messages": messages, "temperature": float(temperature), "stream": bool(stream)}
+    r = requests.post(f"{OLLAMA_HOST}/api/chat", headers=HEADERS_JSON, json=payload, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
 
 # -------------------------
 # Estado
@@ -199,362 +177,253 @@ def topk_by_cosine(E_db: np.ndarray, q: np.ndarray, k: int = 5):
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
-if "upload_index" not in st.session_state:
-    st.session_state.upload_index = {"texts": [], "metas": [], "vec": None, "X": None}
+# Upload em sessão (APENAS embeddings)
+if "upld_texts" not in st.session_state:
+    st.session_state.upld_texts = []     # [str]
+if "upld_metas" not in st.session_state:
+    st.session_state.upld_metas = []     # [{"file":..., "chunk_id":...}]
+if "upld_emb" not in st.session_state:
+    st.session_state.upld_emb = None     # np.ndarray (n, d)
 
-# encoder em sessão
-if "encoder_mode" not in st.session_state:
-    st.session_state.encoder_mode = "none"  # "st" | "onnx" | "none"
+# Encoder em sessão
+if "st_model_name" not in st.session_state:
+    st.session_state.st_model_name = os.getenv("ST_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
 if "st_encoder" not in st.session_state:
     st.session_state.st_encoder = None
-if "onnx_sess" not in st.session_state:
-    st.session_state.onnx_sess = None
-if "onnx_tok" not in st.session_state:
-    st.session_state.onnx_tok = None
+
+def ensure_encoder():
+    if st.session_state.st_encoder is None:
+        st.session_state.st_encoder = SentenceTransformer(st.session_state.st_model_name)
+
+def encode_texts(texts: list[str]) -> np.ndarray:
+    ensure_encoder()
+    if not texts:
+        return np.zeros((0, 384), dtype=np.float32)
+    M = st.session_state.st_encoder.encode(
+        texts, batch_size=128, normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=True
+    ).astype(np.float32)
+    return M
+
+def encode_query(text: str) -> np.ndarray:
+    ensure_encoder()
+    v = st.session_state.st_encoder.encode([text], normalize_embeddings=True, convert_to_numpy=True)[0].astype(np.float32)
+    v /= (np.linalg.norm(v) + 1e-9)
+    return v
 
 # -------------------------
 # Sidebar
 # -------------------------
 st.sidebar.header("Configurações")
-with st.sidebar.expander("Ollama Cloud", expanded=False):
+with st.sidebar.expander("Modelo de embeddings", expanded=False):
+    st.write("Sentence-Transformers:", st.session_state.st_model_name)
+
+with st.sidebar.expander("LLM (Ollama-compat)", expanded=False):
     st.write("Host:", OLLAMA_HOST)
-    st.write("Modelo:", OLLAMA_MODEL)
+    st.write("Model:", OLLAMA_MODEL)
     if not OLLAMA_API_KEY:
-        st.info("Sem OLLAMA_API_KEY — ok para testes locais.")
+        st.info("Sem OLLAMA_API_KEY — ok se seu endpoint não exigir auth.")
 
 st.sidebar.divider()
-st.sidebar.subheader("RAG • Pesos & Limiar")
-w_upload = st.sidebar.slider("Peso do UPLOAD", 0.0, 1.0, 0.7, 0.05)
-w_hist   = 1.0 - w_upload
-topk_upload = st.sidebar.slider("Top-K Upload", 1, 15, 5, 1)
-topk_hist   = st.sidebar.slider("Top-K HIST",   1, 15, 5, 1)
-use_catalog = st.sidebar.checkbox("Injetar datasets_context.md", True)
-force_embeddings = st.sidebar.checkbox("Usar EMBEDDINGS (se encoder disponível)", True)
-upload_chunk_size  = st.sidebar.slider("Tamanho do chunk (upload)", 500, 2000, 1200, 50)
-upload_overlap = st.sidebar.slider("Overlap do chunk (upload)", 50, 600, 200, 10)
-upload_raw_max = st.sidebar.slider("Tamanho máx. do bloco UPLOAD_RAW (chars)", 500, 6000, 2500, 100)
+st.sidebar.subheader("RAG • Parâmetros")
+topk_upload = st.sidebar.slider("Top-K (UPLOAD)", 1, 10, 4, 1)
+topk_hist   = st.sidebar.slider("Top-K (Sphera/GoSee/Docs)", 1, 10, 5, 1)
+include_ws_prec_cp = st.sidebar.checkbox("Inferir WS/Precursores/CP do upload (semântica)", True)
+upload_chunk_size  = st.sidebar.slider("Chunk (upload) — caracteres", 500, 2000, 1200, 50)
+upload_overlap     = st.sidebar.slider("Overlap (upload)", 50, 600, 200, 10)
+upload_raw_max     = st.sidebar.slider("Tamanho máx. do bloco UPLOAD_RAW (chars)", 500, 6000, 2500, 100)
+use_catalog        = st.sidebar.checkbox("Injetar datasets_context.md", True)
 
 st.sidebar.divider()
 uploaded_files = st.sidebar.file_uploader("Upload (PDF, DOCX, XLSX, CSV, TXT/MD)",
                                           type=["pdf","docx","xlsx","xls","csv","txt","md"],
                                           accept_multiple_files=True)
-
 col_a, col_b = st.sidebar.columns(2)
 with col_a:
     if st.button("Limpar uploads", use_container_width=True):
-        st.session_state.upload_index = {"texts": [], "metas": [], "vec": None, "X": None}
+        st.session_state.upld_texts = []
+        st.session_state.upld_metas = []
+        st.session_state.upld_emb   = None
 with col_b:
     if st.button("Limpar chat", use_container_width=True):
         st.session_state.chat = []
 
 # -------------------------
-# Indexação de UPLOADS (TF-IDF por sessão)
+# Ingest de upload (APENAS embeddings)
 # -------------------------
-def rebuild_upload_index():
-    try:
-        from sklearn.feature_extraction.text import TfidfVectorizer
-    except Exception as e:
-        st.warning(f"scikit-learn ausente para TF-IDF de uploads: {e}")
-        return
-    texts = st.session_state.upload_index["texts"]
-    if not texts:
-        st.session_state.upload_index["vec"] = None
-        st.session_state.upload_index["X"] = None
-        return
-    vec = TfidfVectorizer(lowercase=True, strip_accents="unicode",
-                          analyzer="word", ngram_range=(1,2),
-                          max_features=50000)
-    X = vec.fit_transform(texts)
-    st.session_state.upload_index["vec"] = vec
-    st.session_state.upload_index["X"] = X
+def add_uploads(files):
+    new_texts, new_metas = [], []
+    for uf in files:
+        try:
+            txt = read_any(uf)
+            parts = chunk_text(txt, max_chars=upload_chunk_size, overlap=upload_overlap)
+            for i, p in enumerate(parts):
+                new_texts.append(p)
+                new_metas.append({"file": uf.name, "chunk_id": i})
+        except Exception as e:
+            st.warning(f"Falha ao processar {uf.name}: {e}")
+    if new_texts:
+        # agrega
+        st.session_state.upld_texts.extend(new_texts)
+        st.session_state.upld_metas.extend(new_metas)
+        # (re)embeda
+        st.session_state.upld_emb = encode_texts(st.session_state.upld_texts)
+        st.success(f"Upload indexado: {len(new_texts)} chunks.")
 
 if uploaded_files:
-    with st.spinner("Lendo files e indexando (TF-IDF, local)…"):
-        new_texts, new_metas = [], []
-        for uf in uploaded_files:
-            try:
-                text = read_any(uf)
-                parts = chunk_text(text, max_chars=upload_chunk_size, overlap=upload_overlap)
-                for i, p in enumerate(parts):
-                    new_texts.append(p)
-                    new_metas.append({"file": uf.name, "chunk_id": i})
-            except Exception as e:
-                st.warning(f"Falha ao processar {uf.name}: {e}")
-        if new_texts:
-            st.session_state.upload_index["texts"].extend(new_texts)
-            st.session_state.upload_index["metas"].extend(new_metas)
-            rebuild_upload_index()
-            st.success(f"Upload indexado: {len(new_texts)} chunks.")
+    with st.spinner("Lendo e embedando uploads…"):
+        add_uploads(uploaded_files)
+
+def get_upload_raw_text(max_chars=2500) -> str:
+    texts = st.session_state.upld_texts or []
+    if not texts:
+        return ""
+    out, total = [], 0
+    for t in texts[:3]:  # até 3 chunks
+        if total + len(t) > max_chars:
+            out.append(t[:max(0, max_chars-total)])
+            break
+        out.append(t)
+        total += len(t)
+        if total >= max_chars:
+            break
+    return "\n".join(out).strip()
 
 # -------------------------
-# Carrega HIST (Embeddings preferido; TF-IDF fallback)
+# Carrega bases (embeddings + textos)
 # -------------------------
-# Embeddings (se existirem)
-SPH_EMB_PATH = os.path.join(ANALYTICS_DIR, "sphera_embeddings.npz")
-GOS_EMB_PATH = os.path.join(ANALYTICS_DIR, "gosee_embeddings.npz")
-HIS_EMB_PATH = os.path.join(ANALYTICS_DIR, "history_embeddings.npz")
+sph_emb = load_embeddings_npz(EMB_SPH)
+gos_emb = load_embeddings_npz(EMB_GOS)
+his_emb = load_embeddings_npz(EMB_HIS)
+ws_emb  = load_embeddings_npz(EMB_WS)
+pre_emb = load_embeddings_npz(EMB_PRE)
+cp_emb  = load_embeddings_npz(EMB_CP)
 
-sph_emb = load_embeddings_npz(SPH_EMB_PATH)
-gos_emb = load_embeddings_npz(GOS_EMB_PATH)
-his_emb = load_embeddings_npz(HIS_EMB_PATH)
+sph_df, gos_df, history_rows = None, None, []
 
-# Dados de texto/metadata correspondentes
-SPH_PQ_PATH = os.path.join(ANALYTICS_DIR, "sphera.parquet")
-GOS_PQ_PATH = os.path.join(ANALYTICS_DIR, "gosee.parquet")
-HIS_JSONL   = os.path.join(ANALYTICS_DIR, "history_texts.jsonl")
-
-sphera_df = None
-gosee_df  = None
-history_rows = []
-
-if os.path.exists(SPH_PQ_PATH):
+if os.path.exists(PQ_SPH):
     try:
-        sphera_df = pd.read_parquet(SPH_PQ_PATH)
+        sph_df = pd.read_parquet(PQ_SPH)
     except Exception as e:
-        st.warning(f"Falha ao ler {SPH_PQ_PATH}: {e}")
+        st.warning(f"Falha ao ler {PQ_SPH}: {e}")
 
-if os.path.exists(GOS_PQ_PATH):
+if os.path.exists(PQ_GOS):
     try:
-        gosee_df = pd.read_parquet(GOS_PQ_PATH)
+        gos_df = pd.read_parquet(PQ_GOS)
     except Exception as e:
-        st.warning(f"Falha ao ler {GOS_PQ_PATH}: {e}")
+        st.warning(f"Falha ao ler {PQ_GOS}: {e}")
 
-if os.path.exists(HIS_JSONL):
+if os.path.exists(HIS_JSON):
     try:
-        with open(HIS_JSONL, "r", encoding="utf-8") as f:
+        with open(HIS_JSON, "r", encoding="utf-8") as f:
             for line in f:
                 history_rows.append(json.loads(line))
     except Exception as e:
-        st.warning(f"Falha ao ler {HIS_JSONL}: {e}")
+        st.warning(f"Falha ao ler {HIS_JSON}: {e}")
 
-# TF-IDF fallback (pré-gerado pelo make_catalog_indexes.py)
-def load_joblib_safe(path):
-    if joblib is None:
-        return None
-    if not os.path.exists(path):
-        return None
-    try:
-        return joblib.load(path)
-    except Exception as e:
-        st.warning(f"Não consegui carregar {path}: {e}")
-        return None
-
-sphera_tfidf = load_joblib_safe(os.path.join(ANALYTICS_DIR, "sphera_tfidf.joblib"))
-gosee_tfidf  = load_joblib_safe(os.path.join(ANALYTICS_DIR, "gosee_tfidf.joblib"))
-hist_tfidf   = load_joblib_safe(os.path.join(ANALYTICS_DIR, "history_tfidf.joblib"))
-
-# Catalogo opcional
 catalog_ctx = ""
-try:
-    if os.path.exists(DATASETS_CONTEXT_FILE):
-        with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
+if os.path.exists(CATALOG_FILE):
+    try:
+        with open(CATALOG_FILE, "r", encoding="utf-8") as f:
             catalog_ctx = f.read()
-except Exception:
-    pass
+    except Exception:
+        pass
 
 # -------------------------
-# Encoder (embeddings) — inicialização sob demanda
+# Busca semântica (bases)
 # -------------------------
-def ensure_encoder(want_embeddings: bool):
-    """
-    Inicializa um encoder se embeddings estiverem habilitados e necessário.
-    Tenta sentence-transformers; se não, ONNX local; se não, 'none'.
-    """
-    if not want_embeddings:
-        st.session_state.encoder_mode = "none"
-        st.session_state.st_encoder = None
-        st.session_state.onnx_sess = None
-        st.session_state.onnx_tok  = None
-        return
-
-    # Já inicializado?
-    if st.session_state.encoder_mode in ("st", "onnx"):
-        return
-
-    # 1) Sentence-Transformers (se instalado)
-    if _HAS_ST:
-        try:
-            model_name = os.getenv("ST_MODEL_NAME", "all-MiniLM-L6-v2")
-            st.session_state.st_encoder = SentenceTransformer(model_name)
-            st.session_state.encoder_mode = "st"
-            return
-        except Exception as e:
-            st.info(f"ST indisponível: {e}")
-
-    # 2) ONNX local (se existir model.onnx + tokenizer)
-    if _HAS_ORT and os.path.exists(os.path.join(MODELS_ONNX_DIR, "model.onnx")):
-        try:
-            tok = AutoTokenizer.from_pretrained(MODELS_ONNX_DIR, local_files_only=True)
-            sess = ort.InferenceSession(os.path.join(MODELS_ONNX_DIR, "model.onnx"),
-                                        providers=["CPUExecutionProvider"])
-            st.session_state.onnx_tok = tok
-            st.session_state.onnx_sess = sess
-            st.session_state.encoder_mode = "onnx"
-            return
-        except Exception as e:
-            st.info(f"ONNX indisponível: {e}")
-
-    # 3) Sem encoder
-    st.session_state.encoder_mode = "none"
-
-def encode_query(text: str) -> np.ndarray | None:
-    """Gera embedding L2-normalizado da consulta, conforme encoder disponível."""
-    mode = st.session_state.encoder_mode
-    if mode == "st" and st.session_state.st_encoder is not None:
-        v = st.session_state.st_encoder.encode([text])[0].astype(np.float32)
-        v /= (np.linalg.norm(v) + 1e-9)
-        return v
-    if mode == "onnx" and st.session_state.onnx_sess is not None and st.session_state.onnx_tok is not None:
-        tok = st.session_state.onnx_tok(text, return_tensors="np", truncation=True, max_length=256)
-        inputs = {k: v.astype(np.int64) for k, v in tok.items()}
-        out = st.session_state.onnx_sess.run(None, inputs)
-        # tenta achar a última saída como embedding
-        v = out[-1].squeeze()
-        v = v.astype(np.float32)
-        v /= (np.linalg.norm(v) + 1e-9)
-        return v
-    return None
-
-# -------------------------
-# Busca UPLOAD (TF-IDF sessão)
-# -------------------------
-def search_upload(query: str, topk_upload: int):
-    blocks = []
-    vec = st.session_state.upload_index["vec"]
-    X = st.session_state.upload_index["X"]
-    metas = st.session_state.upload_index["metas"]
-    texts = st.session_state.upload_index["texts"]
-    if vec is None or X is None or not texts:
-        return blocks
-    q = vec.transform([query])
-    sims = (q @ X.T).toarray()[0]
-    idx = np.argsort(-sims)[: topk_upload * 4]
-    for i in idx:
-        s = float(sims[i])
-        m = metas[i]
-        t = texts[i]
-        blocks.append((s, f"[UPLOAD {m['file']} / {m['chunk_id']}] (sim={s:.3f})\n{t}"))
-    blocks.sort(key=lambda x: -x[0])
-    return [b for _, b in blocks[:topk_upload]]
-
-def get_upload_raw_text(max_chars=2500):
-    texts = st.session_state.upload_index["texts"] or []
-    if not texts:
-        return ""
-    # concatena os 2 primeiros chunks (ou menos) — simples e rápido
-    out = ""
-    for t in texts[:2]:
-        if len(out) + len(t) > max_chars:
-            out += "\n" + t[:max(0, max_chars - len(out))]
-            break
-        out += ("\n" if out else "") + t
+def search_sphera(qv: np.ndarray, k: int) -> list[str]:
+    if sph_emb is None or sph_df is None or qv is None:
+        return []
+    hits = cos_topk(sph_emb["E"], qv, k)
+    col_desc = "Description" if "Description" in sph_df.columns else sph_df.columns[0]
+    out = []
+    for i, s in hits:
+        row = sph_df.iloc[i]
+        evid = row.get("Event ID", row.get("EVENT_NUMBER", f"row{i}"))
+        snippet = str(row.get(col_desc, ""))[:700]
+        out.append(f"[Sphera/{evid}] (sim={s:.3f})\n{snippet}")
     return out
 
-# -------------------------
-# Busca HIST (Embeddings → TF-IDF)
-# -------------------------
-def search_hist_embeddings(query: str, topk_hist: int):
-    """Busca usando embeddings, se encoder disponível e base embeddings carregada."""
-    ensure_encoder(force_embeddings)
-    qv = encode_query(query) if force_embeddings else None
-    blocks = []
+def search_gosee(qv: np.ndarray, k: int) -> list[str]:
+    if gos_emb is None or gos_df is None or qv is None:
+        return []
+    hits = cos_topk(gos_emb["E"], qv, k)
+    col_obs = "Observation" if "Observation" in gos_df.columns else gos_df.columns[0]
+    out = []
+    for i, s in hits:
+        row = gos_df.iloc[i]
+        gid = row.get("ID", f"row{i}")
+        snippet = str(row.get(col_obs, ""))[:700]
+        out.append(f"[GoSee/{gid}] (sim={s:.3f})\n{snippet}")
+    return out
 
-    # Sphera
-    if qv is not None and sph_emb is not None and sphera_df is not None:
-        sph_text_col = "Description" if "Description" in sphera_df.columns else sphera_df.columns[0]
-        hits = topk_by_cosine(sph_emb["E"], qv, k=topk_hist)
+def search_docs(qv: np.ndarray, k: int) -> list[str]:
+    if his_emb is None or not history_rows or qv is None:
+        return []
+    hits = cos_topk(his_emb["E"], qv, k)
+    out = []
+    for i, s in hits:
+        r = history_rows[i]
+        tag = f"Docs/{r.get('source','?')}/{r.get('chunk_id',0)}"
+        snippet = str(r.get("text", ""))[:700]
+        out.append(f"[{tag}] (sim={s:.3f})\n{snippet}")
+    return out
+
+def search_upload_chunks(qv: np.ndarray, k: int) -> list[str]:
+    E = st.session_state.upld_emb
+    texts = st.session_state.upld_texts
+    metas = st.session_state.upld_metas
+    if E is None or E.size == 0 or qv is None:
+        return []
+    hits = cos_topk(E, qv, k)
+    out = []
+    for i, s in hits:
+        m = metas[i]
+        t = texts[i][:700]
+        out.append(f"[UPLOAD {m['file']} / {m['chunk_id']}] (sim={s:.3f})\n{t}")
+    return out
+
+def infer_labels_from_upload(k_each=5) -> list[str]:
+    """Inferir WS / Precursores / CP a partir do centróide dos embeddings do upload (se houver)."""
+    E = st.session_state.upld_emb
+    if E is None or E.size == 0:
+        return []
+    centroid = E.mean(axis=0).astype(np.float32)
+    centroid /= (np.linalg.norm(centroid) + 1e-9)
+
+    out = []
+    def pick(db, tag):
+        hits = cos_topk(db["E"], centroid, k_each)
+        labels = []
+        texts  = db["texts"]
         for i, s in hits:
-            i = int(i)
-            row = sphera_df.iloc[i]
-            evid = row.get("Event ID", row.get("EVENT_NUMBER", f"row{i}"))
-            snippet = str(row.get(sph_text_col, ""))[:600]
-            blocks.append((float(s), f"[Sphera/{evid}] (sim={float(s):.3f})\n{snippet}"))
+            # Mostra o próprio texto/label curto (primeiros 120 chars)
+            lbl = str(texts[i]) if i < len(texts) else f"{tag}-{i}"
+            labels.append(f"{lbl} (sim={s:.2f})")
+        if labels:
+            out.append(f"[{tag}] Prováveis: " + "; ".join(labels))
 
-    # GoSee
-    if qv is not None and gos_emb is not None and gosee_df is not None:
-        gos_text_col = "Observation" if "Observation" in gosee_df.columns else gosee_df.columns[0]
-        hits = topk_by_cosine(gos_emb["E"], qv, k=topk_hist)
-        for i, s in hits:
-            i = int(i)
-            row = gosee_df.iloc[i]
-            gid = row.get("ID", f"row{i}")
-            snippet = str(row.get(gos_text_col, ""))[:600]
-            blocks.append((float(s), f"[GoSee/{gid}] (sim={float(s):.3f})\n{snippet}"))
+    if ws_emb is not None:
+        pick(ws_emb, "WeakSignals")
+    if pre_emb is not None:
+        pick(pre_emb, "Precursores")
+    if cp_emb is not None:
+        pick(cp_emb, "CP-Taxonomia")
 
-    # Docs (history)
-    if qv is not None and his_emb is not None and history_rows:
-        E = his_emb["E"]
-        hits = topk_by_cosine(E, qv, k=topk_hist)
-        for i, s in hits:
-            i = int(i)
-            row = history_rows[i]
-            src = f"Docs/{row.get('source','?')}/{row.get('chunk_id',0)}"
-            snippet = str(row.get("text", ""))[:600]
-            blocks.append((float(s), f"[{src}] (sim={float(s):.3f})\n{snippet}"))
-
-    blocks.sort(key=lambda x: -x[0])
-    return [b for _, b in blocks[:topk_hist]]
-
-def search_hist_tfidf(query: str, topk_hist: int):
-    """Fallback TF-IDF pré-indexado."""
-    blocks = []
-
-    # Sphera
-    if sphera_tfidf is not None and sphera_df is not None:
-        vec, X, text_col = sphera_tfidf["vectorizer"], sphera_tfidf["matrix"], sphera_tfidf.get("text_col", "Description")
-        q = vec.transform([query])
-        sims = (q @ X.T).toarray()[0]
-        idx = np.argsort(-sims)[: topk_hist]
-        for i in idx:
-            i = int(i)
-            s = float(sims[i])
-            row = sphera_df.iloc[i]
-            evid = row.get("Event ID", row.get("EVENT_NUMBER", f"row{i}"))
-            snippet = str(row.get(text_col, ""))[:600]
-            blocks.append((s, f"[Sphera/{evid}] (sim={s:.3f})\n{snippet}"))
-
-    # GoSee
-    if gosee_tfidf is not None and gosee_df is not None:
-        vec, X, text_col = gosee_tfidf["vectorizer"], gosee_tfidf["matrix"], gosee_tfidf.get("text_col", "Observation")
-        q = vec.transform([query])
-        sims = (q @ X.T).toarray()[0]
-        idx = np.argsort(-sims)[: topk_hist]
-        for i in idx:
-            i = int(i)
-            s = float(sims[i])
-            row = gosee_df.iloc[i]
-            gid = row.get("ID", f"row{i}")
-            snippet = str(row.get(text_col, ""))[:600]
-            blocks.append((s, f"[GoSee/{gid}] (sim={s:.3f})\n{snippet}"))
-
-    # Docs
-    if hist_tfidf is not None and history_rows:
-        vec, X = hist_tfidf["vectorizer"], hist_tfidf["matrix"]
-        q = vec.transform([query])
-        sims = (q @ X.T).toarray()[0]
-        idx = np.argsort(-sims)[: topk_hist]
-        for i in idx:
-            i = int(i)
-            s = float(sims[i])
-            row = history_rows[i]
-            src = f"Docs/{row.get('source','?')}/{row.get('chunk_id',0)}"
-            snippet = str(row.get("text", ""))[:600]
-            blocks.append((s, f"[{src}] (sim={s:.3f})\n{snippet}"))
-
-    blocks.sort(key=lambda x: -x[0])
-    return [b for _, b in blocks[:topk_hist]]
+    return out
 
 # -------------------------
 # UI
 # -------------------------
-st.title("ESO • CHAT — HIST + UPLD (Embeddings preferencial)")
-st.caption("RAG local com embeddings (Sphera/GoSee/Docs) + upload; TF-IDF usado apenas como fallback quando permitido.")
+st.title("ESO • CHAT — HIST + UPLD (Embeddings Only)")
+st.caption("RAG semântico com embeddings pré-gerados (Sphera/GoSee/Docs) e upload embeddado em sessão. Sem TF-IDF.")
 
-# Histórico de chat
+# Histórico
 for m in st.session_state.chat:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
 
+# Input
 prompt = st.chat_input("Digite sua pergunta…")
 
 if prompt:
@@ -562,51 +431,38 @@ if prompt:
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 1) Recuperação no UPLOAD (sempre TF-IDF sessão)
-    up_blocks = search_upload(prompt, topk_upload=topk_upload)
-
-    # 2) Recuperação no HIST (Embeddings → TF-IDF)
-    hi_blocks = []
+    # Embedding da query
     try:
-        if force_embeddings:
-            hi_blocks = search_hist_embeddings(prompt, topk_hist=topk_hist)
-        if not hi_blocks:
-            hi_blocks = search_hist_tfidf(prompt, topk_hist=topk_hist)
+        qv = encode_query(prompt)
     except Exception as e:
-        st.warning(f"Falha na busca HIST: {e}")
-        hi_blocks = []
+        st.error(f"Falha ao gerar embedding da consulta: {e}")
+        qv = None
 
-    # 3) Combinação com pesos (ordenação por score ponderado)
-    combined = []
-    for b in up_blocks:
-        try:
-            s = float(b.split("(sim=")[1].split(")")[0])
-        except Exception:
-            s = 0.0
-        combined.append((w_upload * s, b))
-    for b in hi_blocks:
-        try:
-            s = float(b.split("(sim=")[1].split(")")[0])
-        except Exception:
-            s = 0.0
-        combined.append((w_hist * s, b))
-    combined.sort(key=lambda x: -x[0])
-    context_blocks = [b for _, b in combined]
+    # Recuperações (sempre em embeddings)
+    up_blocks  = search_upload_chunks(qv, k=topk_upload) if qv is not None else []
+    sph_blocks = search_sphera(qv, k=topk_hist) if qv is not None else []
+    gos_blocks = search_gosee(qv, k=topk_hist) if qv is not None else []
+    his_blocks = search_docs(qv, k=topk_hist)  if qv is not None else []
 
-    # 4) Opcional: inserir RAW do upload (até N chars) para garantir que o arquivo "entra" no prompt
+    # Opcional: rótulos semânticos inferidos do upload
+    labels_blocks = infer_labels_from_upload(k_each=5) if include_ws_prec_cp else []
+
+    # Upload RAW: garantir que o conteúdo do arquivo entre no prompt
     upload_raw = get_upload_raw_text(upload_raw_max)
-    if upload_raw:
-        context_blocks = [f"[UPLOAD_RAW] (recorte)\n{upload_raw}"] + context_blocks
+    raw_block = [f"[UPLOAD_RAW]\n{upload_raw}"] if upload_raw else []
+
+    # Monta contexto (ordem: upload raw, labels inferidos, upload knn, sphera, gosee, docs)
+    context_blocks = raw_block + labels_blocks + up_blocks + sph_blocks + gos_blocks + his_blocks
 
     SYSTEM = (
         "Você é um assistente de segurança operacional. "
-        "Use os CONTEXTOS a seguir como evidências. "
-        "Se a pergunta solicitar quantitativos ou listas do histórico, responda SOMENTE com base nos CONTEXTOS. "
-        "Cite trechos relevantes quando fizer afirmações específicas."
+        "Use os CONTEXTOS a seguir como evidências e cite trechos quando fizer afirmações específicas. "
+        "Se pedirem contagem/listas, responda SOMENTE com base nos CONTEXTOS. "
+        "Evite extrapolações sem amparo textual."
     )
 
     messages = [{"role": "system", "content": SYSTEM}]
-    if use_catalog and catalog_ctx:
+    if use_catalog and os.path.exists(CATALOG_FILE):
         messages.append({"role": "system", "content": catalog_ctx})
 
     if context_blocks:
@@ -620,23 +476,22 @@ if prompt:
         with st.spinner("Consultando o modelo…"):
             try:
                 resp = ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False)
-                content = resp.get("message", {}).get("content", "").strip() or json.dumps(resp)[:1000]
+                content = resp.get("message", {}).get("content", "").strip() or json.dumps(resp)[:1200]
             except Exception as e:
                 content = f"Falha ao consultar o modelo: {e}"
             st.markdown(content)
+
     st.session_state.chat.append({"role": "assistant", "content": content})
 
 # -------------------------
-# Painel status
+# Painel de Status
 # -------------------------
 with st.expander("📦 Status dos índices", expanded=False):
-    st.write("Embeddings Sphera:", "✅" if sph_emb is not None and sphera_df is not None else "—")
-    st.write("Embeddings GoSee :", "✅" if gos_emb is not None and gosee_df  is not None else "—")
+    st.write("Embeddings Sphera:", "✅" if sph_emb is not None and sph_df is not None else "—")
+    st.write("Embeddings GoSee :", "✅" if gos_emb is not None and gos_df is not None else "—")
     st.write("Embeddings Docs  :", "✅" if his_emb is not None and history_rows else "—")
-    st.write("TF-IDF Sphera    :", "✅" if sphera_tfidf is not None and sphera_df is not None else "—")
-    st.write("TF-IDF GoSee     :", "✅" if gosee_tfidf  is not None and gosee_df  is not None else "—")
-    st.write("TF-IDF Docs      :", "✅" if hist_tfidf   is not None and history_rows else "—")
-
-    enc_label = {"st":"Sentence-Transformers", "onnx":"ONNX local", "none":"—"}[st.session_state.encoder_mode]
-    st.write("Encoder ativo (embeddings):", enc_label)
-    st.write("Uploads indexados:", len(st.session_state.upload_index["texts"]))
+    st.write("Embeddings WS    :", "✅" if ws_emb is not None else "—")
+    st.write("Embeddings Prec  :", "✅" if pre_emb is not None else "—")
+    st.write("Embeddings CP    :", "✅" if cp_emb is not None else "—")
+    st.write("Encoder (ST)     :", "✅" if st.session_state.st_encoder is not None else "—")
+    st.write("Uploads indexados:", len(st.session_state.upld_texts))
