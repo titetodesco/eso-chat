@@ -1,6 +1,7 @@
 # --- base ---
 streamlit==1.50.0
 requests==2.32.3
+openpyxl
 
 # wheels estáveis para Py3.11 em Linux (evitam build demorado)
 numpy==1.26.4
