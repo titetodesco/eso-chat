@@ -35,7 +35,7 @@ catalog:
           description: "Data do registro."
 
     - name: ws_dict
-      path: "data/xlsx/DicionarioWaekSignals.xlsx"
+      path: "data/xlsx/DicionarioWeakSignals.xlsx"
       sheet: "Sheet1"
       description: "Dicionário de Weak Signals PT/EN."
       key_columns: []
