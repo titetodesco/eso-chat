@@ -83,9 +83,9 @@ Top-K padrão: 10 (ajustável por consulta).
 
 Limiar padrão:
 
-WS/Precursores/CP: 0,25 (recall alto)
+WS/Precursores/CP: 0,50 (recall alto)
 
-Sphera/GoSee/Histórico: 0,35 (pode subir para 0,45 quando o usuário pedir mais precisão)
+Sphera/GoSee/Histórico: 0,45 (pode subir para 0,55 quando o usuário pedir mais precisão)
 
 4) Regras por tipo de pergunta
 4.1 Weak Signals (WS)
