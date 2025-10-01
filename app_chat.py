@@ -1,8 +1,11 @@
 # app_chat.py — ESO • CHAT (Embeddings-only)
 # - Busca SEMÂNTICA usando embeddings:
-#   • Sphera:   data/analytics/sphera_embeddings.npz   + sphera.parquet
-#   • GoSee:    data/analytics/gosee_embeddings.npz    + gosee.parquet
-#   • History:  data/analytics/history_embeddings.npz  + history_texts.jsonl
+#   • Sphera:     data/analytics/sphera_embeddings.npz   + sphera.parquet
+#   • GoSee:      data/analytics/gosee_embeddings.npz    + gosee.parquet
+#   • History:    data/analytics/history_embeddings.npz  + history_texts.jsonl
+#   • WeakSignals: data/analytics/ws_embeddings.npz      + ws.parquet | data/xlsx/DicionarioWeakSignals.xlsx
+#   • Precursores: data/analytics/prec_embeddings.npz    + prec.parquet | data/xlsx/precursores_expandido.xlsx
+#   • CP Taxonomy: data/analytics/cp_embeddings.npz      + cp.parquet   | data/xlsx/TaxonomiaCP_Por.xlsx
 # - Uploads: faz chunk + embeddings em tempo real (Sentence-Transformers)
 # - Injeta apenas TRECHOS recuperados (não envia vetores ao LLM)
 # - Sem TF-IDF, sem ONNX: apenas ST + Torch CPU
@@ -16,9 +19,12 @@ import pandas as pd
 import streamlit as st
 from pathlib import Path
 
+# ---------- Config básica (primeiro comando Streamlit!) ----------
+st.set_page_config(page_title="ESO • CHAT (Embeddings)", page_icon="💬", layout="wide")
+
 # ---------- Contexto (system prompt) ----------
 CONTEXT_MD_REL_PATH = Path(__file__).parent / "docs" / "contexto_eso_chat.md"
-DATASETS_CONTEXT_FILE = "datasets_context.md"  # você já tinha isso (mantido)
+DATASETS_CONTEXT_FILE = "datasets_context.md"  # opcional (YAML/MD adicional)
 
 @st.cache_data(show_spinner=False)
 def load_file_text(p: Path) -> str:
@@ -28,34 +34,26 @@ def load_file_text(p: Path) -> str:
         return f"[AVISO] Não consegui ler {p}: {e}\n(Prosseguindo sem esse contexto.)"
 
 def build_system_prompt() -> str:
-    # Preâmbulo curto + contexto operacional
     preambulo = (
         "Você é o ESO-CHAT (segurança operacional).\n"
-        "Siga estritamente as regras e convenções do contexto abaixo.\n"
-        "Responda em PT-BR por padrão.\n"
-        "Quando usar buscas semânticas, sempre mostre IDs/Fonte e similaridade.\n"
-        "Não invente dados fora dos contextos fornecidos.\n"
+        "REGRAS RÍGIDAS:\n"
+        "1) Ao listar Weak Signals, Precursores (H-T-O) e Fatores da Taxonomia CP, USE EXCLUSIVAMENTE os itens presentes nos dicionários embutidos (WS/Prec/CP), "
+        "com base nos trechos recuperados como contexto ([WS/...], [Prec/...], [CP/...]).\n"
+        "2) NÃO crie sinais/fatores novos a partir do upload; o upload serve apenas para evidência de correspondência semântica.\n"
+        "3) Sempre cite os blocos de contexto (ex.: [WS/<id>] e [UPLOAD ...]) ao justificar.\n"
+        "4) Se não houver correspondência ≥ limiar, diga explicitamente que não foi encontrado.\n"
+        "Responda em PT-BR por padrão. Não invente dados fora dos contextos fornecidos.\n"
     )
     ctx_md = load_file_text(CONTEXT_MD_REL_PATH)
-    # Nota: o datasets_context.md (se existir) será adicionado mais abaixo como outra mensagem de sistema.
     return preambulo + "\n\n=== CONTEXTO ESO-CHAT (.md) ===\n" + ctx_md
 
 # Inicializa uma vez por sessão
 if "system_prompt" not in st.session_state:
     st.session_state.system_prompt = build_system_prompt()
 
-# (Opcional) botão para recarregar o .md sem reiniciar o app
-if st.sidebar.button("Recarregar contexto (.md)"):
-    st.session_state.system_prompt = build_system_prompt()
-    st.sidebar.success("Contexto recarregado.")
-
-
-# ---------- Config básica ----------
-st.set_page_config(page_title="ESO • CHAT (Embeddings)", page_icon="💬", layout="wide")
-
+# ---------- Parâmetros / caminhos ----------
 DATA_DIR = "data"
 AN_DIR = os.path.join(DATA_DIR, "analytics")
-DATASETS_CONTEXT_FILE = "datasets_context.md"  # opcional (YAML em texto)
 ST_MODEL_NAME = os.getenv("ST_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
 
 # Modelo de chat (Ollama-compatible). Se não tiver chave, tenta mesmo assim.
@@ -64,7 +62,7 @@ OLLAMA_MODEL = st.secrets.get("OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "gpt-oss
 OLLAMA_API_KEY = st.secrets.get("OLLAMA_API_KEY", os.getenv("OLLAMA_API_KEY"))
 HEADERS_JSON = {"Authorization": f"Bearer {OLLAMA_API_KEY}", "Content-Type": "application/json"} if OLLAMA_API_KEY else {"Content-Type": "application/json"}
 
-# ---------- Dependências necessárias (sem elas o app para de forma elegante) ----------
+# ---------- Dependências necessárias ----------
 def _fatal(msg: str):
     st.error(msg)
     st.stop()
@@ -100,7 +98,7 @@ def l2norm(mat: np.ndarray) -> np.ndarray:
     n = np.linalg.norm(mat, axis=1, keepdims=True) + 1e-9
     return mat / n
 
-def cos_topk(E_db: np.ndarray, q: np.ndarray, k: int) -> list[tuple[int, float]]:
+def cos_topk(E_db: np.ndarray, q: np.ndarray, k: int):
     # E_db: (n,d) L2; q: (d,) (L2)
     if E_db is None or E_db.size == 0:
         return []
@@ -115,7 +113,6 @@ def load_npz_embeddings(path: str) -> np.ndarray | None:
         return None
     try:
         with np.load(path, allow_pickle=True) as z:
-            # procurar chave provável
             for key in ("embeddings", "E", "X", "vectors", "vecs"):
                 if key in z:
                     E = np.array(z[key]).astype(np.float32, copy=False)
@@ -244,6 +241,7 @@ def encode_query(q: str) -> np.ndarray:
     return v
 
 # ---------- Carregamento dos catálogos (embeddings + texto base) ----------
+# Sphera / GoSee / Docs
 SPH_EMB_PATH = os.path.join(AN_DIR, "sphera_embeddings.npz")
 GOS_EMB_PATH = os.path.join(AN_DIR, "gosee_embeddings.npz")
 HIS_EMB_PATH = os.path.join(AN_DIR, "history_embeddings.npz")
@@ -278,6 +276,94 @@ if os.path.exists(HIS_JSONL):
     except Exception as e:
         st.warning(f"Falha ao ler {HIS_JSONL}: {e}")
 
+# Weak Signals / Precursores / CP (embeddings + tabela)
+WS_EMB_PATH = os.path.join(AN_DIR, "ws_embeddings.npz")                # ou weak_signals_embeddings.npz
+WS_PQ_PATH  = os.path.join(AN_DIR, "ws.parquet")
+WS_XLSX_FB  = os.path.join("data", "xlsx", "DicionarioWeakSignals.xlsx")
+
+PREC_EMB_PATH = os.path.join(AN_DIR, "prec_embeddings.npz")
+PREC_PQ_PATH  = os.path.join(AN_DIR, "precursores.parquet")
+PREC_XLSX_FB  = os.path.join("data", "xlsx", "precursores_expandido.xlsx")
+
+CP_EMB_PATH = os.path.join(AN_DIR, "cp_embeddings.npz")
+CP_PQ_PATH  = os.path.join(AN_DIR, "cp.parquet")
+CP_XLSX_FB  = os.path.join("data", "xlsx", "TaxonomiaCP_Por.xlsx")
+
+E_ws   = load_npz_embeddings(WS_EMB_PATH)
+E_prec = load_npz_embeddings(PREC_EMB_PATH)
+E_cp   = load_npz_embeddings(CP_EMB_PATH)
+
+def _read_df_with_fallback(parquet_path, xlsx_path):
+    df = None
+    if os.path.exists(parquet_path):
+        try:
+            df = pd.read_parquet(parquet_path)
+        except Exception as e:
+            st.warning(f"Falha ao ler {parquet_path}: {e}")
+    elif os.path.exists(xlsx_path):
+        try:
+            df = pd.read_excel(xlsx_path)
+        except Exception as e:
+            st.warning(f"Falha ao ler {xlsx_path}: {e}")
+    return df
+
+df_ws   = _read_df_with_fallback(WS_PQ_PATH,   WS_XLSX_FB)
+df_prec = _read_df_with_fallback(PREC_PQ_PATH, PREC_XLSX_FB)
+df_cp   = _read_df_with_fallback(CP_PQ_PATH,   CP_XLSX_FB)
+
+# Descobrir colunas relevantes de cada dicionário
+def _normalize_dict_cols(df: pd.DataFrame, preferred_terms=("PT","pt","Term","term","Sinal","sinal","Nome","name"), id_candidates=("ID","Id","id")):
+    if df is None or df.empty:
+        return None, None
+    cols_map = {c.lower(): c for c in df.columns}
+    term_col = None
+    for cand in preferred_terms:
+        if cand in df.columns:
+            term_col = cand
+            break
+        if cand.lower() in cols_map:
+            term_col = cols_map[cand.lower()]
+            break
+    if term_col is None:
+        term_col = list(df.columns)[0]  # fallback: primeira coluna
+
+    id_col = None
+    for cand in id_candidates:
+        if cand in df.columns:
+            id_col = cand
+            break
+        if cand.lower() in cols_map:
+            id_col = cols_map[cand.lower()]
+            break
+    if id_col is None:
+        df["_ID_"] = np.arange(len(df))
+        id_col = "_ID_"
+    return term_col, id_col
+
+ws_term_col, ws_id_col     = _normalize_dict_cols(df_ws)   if df_ws is not None else (None, None)
+prec_term_col, prec_id_col = _normalize_dict_cols(df_prec) if df_prec is not None else (None, None)
+cp_term_col, cp_id_col     = _normalize_dict_cols(df_cp)   if df_cp is not None else (None, None)
+
+# Para CP, se existirem colunas Dimensão/Fator/Subfator, cria um campo exibível composto (sem alterar embeddings)
+def _compose_cp_label(row: pd.Series):
+    parts = []
+    for key in ("Dimensão","Dimensao","Dimensao/Dimension","Dimension","Dimens\u00e3o"):
+        if key in row:
+            parts.append(str(row[key]).strip())
+            break
+    for key in ("Fator","Fator/Factor","Factor"):
+        if key in row:
+            parts.append(str(row[key]).strip())
+            break
+    for key in ("Subfator","Sub-fator","SubFactor","Sub-fator/SubFactor"):
+        if key in row:
+            parts.append(str(row[key]).strip())
+            break
+    if parts:
+        return " / ".join([p for p in parts if p])
+    # fallback: termo base
+    return str(row.get(cp_term_col, "")).strip() if cp_term_col else ""
+
 # ---------- Sidebar ----------
 st.sidebar.header("Configurações")
 with st.sidebar.expander("Modelo de Resposta", expanded=False):
@@ -285,12 +371,28 @@ with st.sidebar.expander("Modelo de Resposta", expanded=False):
     st.write("Modelo:", OLLAMA_MODEL)
     if not OLLAMA_API_KEY:
         st.info("Sem OLLAMA_API_KEY — ok para ambientes locais se o host não exigir auth.")
+    if st.button("Recarregar contexto (.md)", use_container_width=True):
+        st.session_state.system_prompt = build_system_prompt()
+        st.success("Contexto recarregado.")
 
 st.sidebar.subheader("Recuperação (Embeddings)")
 k_sph = st.sidebar.slider("Top-K Sphera", 0, 10, 5, 1)
 k_gos = st.sidebar.slider("Top-K GoSee",  0, 10, 5, 1)
 k_his = st.sidebar.slider("Top-K Docs",   0, 10, 3, 1)
 k_upl = st.sidebar.slider("Top-K Upload", 0, 10, 5, 1)
+
+st.sidebar.subheader("Dicionários (WS / Precursores / CP)")
+k_ws_query   = st.sidebar.slider("Top-K WS (por query)",   0, 20, 10, 1)
+k_prec_query = st.sidebar.slider("Top-K Precursores (por query)", 0, 20, 10, 1)
+k_cp_query   = st.sidebar.slider("Top-K CP (por query)",   0, 20, 10, 1)
+
+ws_upl_thresh   = st.sidebar.number_input("Limiar Upload↔WS (cos)",   min_value=0.0, max_value=1.0, value=0.25, step=0.01)
+prec_upl_thresh = st.sidebar.number_input("Limiar Upload↔Prec (cos)", min_value=0.0, max_value=1.0, value=0.25, step=0.01)
+cp_upl_thresh   = st.sidebar.number_input("Limiar Upload↔CP (cos)",   min_value=0.0, max_value=1.0, value=0.25, step=0.01)
+
+include_ws_upload   = st.sidebar.checkbox("Cruzar Upload com Dicionário WS",   True)
+include_prec_upload = st.sidebar.checkbox("Cruzar Upload com Dicionário Prec", True)
+include_cp_upload   = st.sidebar.checkbox("Cruzar Upload com Dicionário CP",   True)
 
 st.sidebar.subheader("Upload")
 chunk_size  = st.sidebar.slider("Tamanho do chunk", 500, 2000, 1200, 50)
@@ -329,7 +431,6 @@ if uploaded_files:
             except Exception as e:
                 st.warning(f"Falha ao processar {uf.name}: {e}")
         if new_texts:
-            # embute apenas os novos
             M_new = encode_texts(new_texts, batch_size=64)
             if st.session_state.upld_emb is None:
                 st.session_state.upld_emb = M_new
@@ -339,9 +440,60 @@ if uploaded_files:
             st.session_state.upld_meta.extend(new_meta)
             st.success(f"Upload indexado: {len(new_texts)} chunks.")
 
-# ---------- Busca ----------
+# ---------- Funções de busca nos dicionários ----------
+def _search_dict_by_query(E_dict, df_dict, term_col, id_col, tag: str, query: str, topk: int = 10):
+    if E_dict is None or df_dict is None or term_col is None or id_col is None:
+        return []
+    qv = encode_query(query)
+    hits = cos_topk(E_dict, qv, k=min(topk, E_dict.shape[0]))
+    blocks = []
+    for i, s in hits:
+        row = df_dict.iloc[i]
+        did = row.get(id_col, f"row{i}")
+        term = str(row.get(term_col, "")).strip()
+        # Para CP, tente exibir rótulo composto
+        if tag == "CP":
+            label = _compose_cp_label(row) or term
+            blocks.append((s, f"[{tag}/{did}] (sim={s:.3f}) {label}"))
+        else:
+            blocks.append((s, f"[{tag}/{did}] (sim={s:.3f}) {term}"))
+    return blocks
+
+def _match_upload_to_dict(E_dict, df_dict, term_col, id_col, tag: str, threshold: float, max_upload_chunks: int = 200):
+    if E_dict is None or df_dict is None or term_col is None or id_col is None:
+        return []
+    if st.session_state.upld_emb is None or not st.session_state.upld_texts:
+        return []
+    E_upl = st.session_state.upld_emb
+    texts = st.session_state.upld_texts
+    meta  = st.session_state.upld_meta
+
+    n = min(len(texts), max_upload_chunks)
+    E_upl = E_upl[:n]
+    texts = texts[:n]
+    meta  = meta[:n]
+
+    blocks = []
+    for i in range(E_dict.shape[0]):
+        vec = E_dict[i]
+        sims = E_upl @ vec
+        j = int(np.argmax(sims))
+        s = float(sims[j])
+        if s >= threshold:
+            row = df_dict.iloc[i]
+            did = row.get(id_col, f"row{i}")
+            term = str(row.get(term_col, "")).strip()
+            if tag == "CP":
+                term = _compose_cp_label(row) or term
+            snippet = texts[j][:300].replace("\n", " ")
+            label = f"[UPLOAD {meta[j]['file']} / {meta[j]['chunk_id']}]"
+            blocks.append((s, f"[{tag}/{did}] (sim={s:.3f}) {term}\n  ↳ {label}  “{snippet}”"))
+    blocks.sort(key=lambda x: -x[0])
+    return blocks[:100]
+
+# ---------- Busca principal ----------
 def search_all(query: str) -> list[str]:
-    """Embute a query e busca nos 4 conjuntos (Sphera/GoSee/Docs/Upload). Retorna blocos formatados."""
+    """Embute a query e busca em Sphera/GoSee/Docs/Upload + Dicionários (WS/Prec/CP). Retorna blocos formatados."""
     qv = encode_query(query)
     blocks: list[tuple[float, str]] = []
 
@@ -376,13 +528,29 @@ def search_all(query: str) -> list[str]:
             snippet = str(r.get("text", ""))[:800]
             blocks.append((s, f"[{src}] (sim={s:.3f})\n{snippet}"))
 
-    # Upload
+    # Upload (top-k pelos chunks mais parecidos à query)
     if k_upl > 0 and st.session_state.upld_emb is not None and len(st.session_state.upld_texts) == st.session_state.upld_emb.shape[0]:
         hits = cos_topk(st.session_state.upld_emb, qv, k=k_upl)
         for i, s in hits:
             meta = st.session_state.upld_meta[i]
             snippet = st.session_state.upld_texts[i][:800]
             blocks.append((s, f"[UPLOAD {meta['file']} / {meta['chunk_id']}] (sim={s:.3f})\n{snippet}"))
+
+    # DICIONÁRIOS: por query
+    if k_ws_query > 0:
+        blocks.extend(_search_dict_by_query(E_ws, df_ws, ws_term_col, ws_id_col, "WS", query, topk=k_ws_query))
+    if k_prec_query > 0:
+        blocks.extend(_search_dict_by_query(E_prec, df_prec, prec_term_col, prec_id_col, "Prec", query, topk=k_prec_query))
+    if k_cp_query > 0:
+        blocks.extend(_search_dict_by_query(E_cp, df_cp, cp_term_col, cp_id_col, "CP", query, topk=k_cp_query))
+
+    # DICIONÁRIOS: match Upload ↔ Dict (somente termos existentes)
+    if include_ws_upload:
+        blocks.extend(_match_upload_to_dict(E_ws, df_ws, ws_term_col, ws_id_col, "WS", ws_upl_thresh))
+    if include_prec_upload:
+        blocks.extend(_match_upload_to_dict(E_prec, df_prec, prec_term_col, prec_id_col, "Prec", prec_upl_thresh))
+    if include_cp_upload:
+        blocks.extend(_match_upload_to_dict(E_cp, df_cp, cp_term_col, cp_id_col, "CP", cp_upl_thresh))
 
     blocks.sort(key=lambda x: -x[0])
     return [b for _, b in blocks]
@@ -400,8 +568,8 @@ def get_upload_raw(max_chars: int) -> str:
     return "\n\n".join(buf).strip()
 
 # ---------- UI ----------
-st.title("ESO • CHAT — HIST + UPLD (Embeddings preferencial)")
-st.caption("RAG local 100% embeddings (Sphera / GoSee / Docs / Upload).")
+st.title("ESO • CHAT — HIST + UPLD + WS/Prec/CP (Embeddings)")
+st.caption("RAG local 100% embeddings (Sphera / GoSee / Docs / Upload / Dicionários).")
 
 # Mostrar histórico
 for m in st.session_state.chat:
@@ -424,10 +592,8 @@ if prompt:
         blocks = [f"[UPLOAD_RAW]\n{up_raw}"] + blocks
 
     # Monta mensagens p/ LLM
-    # 1) Mensagem de SISTEMA principal: vem do .md
     msgs = [{"role": "system", "content": st.session_state.system_prompt}]
 
-    # 2) (Opcional) acrescenta o datasets_context.md como outra mensagem de sistema
     if use_catalog and os.path.exists(DATASETS_CONTEXT_FILE):
         try:
             with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
@@ -435,15 +601,14 @@ if prompt:
         except Exception:
             pass
 
-    # 3) Injeta os CONTEXTOS recuperados (RAG) como user-message
     if blocks:
         ctx = "\n\n".join(blocks)
-        msgs.append({"role": "user", "content": f"CONTEXTOS (HIST + UPLOAD):\n{ctx}"})
+        msgs.append({"role": "user", "content": f"CONTEXTOS (HIST + UPLOAD + DICIONÁRIOS):\n{ctx}"})
         msgs.append({"role": "user", "content": f"PERGUNTA: {prompt}"})
     else:
         msgs.append({"role": "user", "content": prompt})
 
-    # 4) Chamada ao modelo
+    # Chamada ao modelo
     with st.chat_message("assistant"):
         with st.spinner("Consultando o modelo…"):
             try:
@@ -454,10 +619,7 @@ if prompt:
             st.markdown(content)
     st.session_state.chat.append({"role": "assistant", "content": content})
 
-
-# ---------- Painel / Diagnóstico ----------
-
-# na sidebar:
+# ---------- Painel / Diagnóstico (opcional) ----------
 debug = st.sidebar.checkbox("Mostrar painel de diagnóstico", False)
 
 if debug:
@@ -472,47 +634,22 @@ if debug:
         st.write("Docs embeddings  :", _ok(E_his is not None and len(rows_his) > 0))
         if E_his is not None and rows_his:
             st.write(f" • shape: {E_his.shape} | chunks: {len(rows_his)}")
-        st.write("Uploads indexados:", len(st.session_state.upld_texts))
-        st.write("Encoder ativo    :", ST_MODEL_NAME)
+
+        st.write("---")
+        st.write("WS embeddings     :", _ok(E_ws is not None and df_ws is not None))
+        if E_ws is not None and df_ws is not None:
+            st.write(f" • shape: {E_ws.shape} | linhas df: {len(df_ws)} | col termo: {ws_term_col} | id: {ws_id_col}")
+        st.write("Precursores emb.  :", _ok(E_prec is not None and df_prec is not None))
+        if E_prec is not None and df_prec is not None:
+            st.write(f" • shape: {E_prec.shape} | linhas df: {len(df_prec)} | col termo: {prec_term_col} | id: {prec_id_col}")
+        st.write("CP Taxonomy emb.  :", _ok(E_cp is not None and df_cp is not None))
+        if E_cp is not None and df_cp is not None:
+            st.write(f" • shape: {E_cp.shape} | linhas df: {len(df_cp)} | col termo: {cp_term_col} | id: {cp_id_col}")
+
+        st.write("Uploads indexados :", len(st.session_state.upld_texts))
+        st.write("Encoder ativo     :", ST_MODEL_NAME)
 
     with st.expander("🔎 Versões dos pacotes", expanded=False):
-        import importlib, sys
-        pkgs = [
-            ("torch", "torch"),
-            ("transformers", "transformers"),
-            ("sentence-transformers", "sentence_transformers"),
-            ("pandas", "pandas"),
-            ("numpy", "numpy"),
-            ("pyarrow", "pyarrow"),
-            ("pypdf", "pypdf"),
-            ("python-docx", "docx"),
-            ("scikit-learn", "sklearn"),
-        ]
-        st.write("Python:", sys.version)
-        for disp, mod in pkgs:
-            try:
-                m = importlib.import_module(mod)
-                ver = getattr(m, "__version__", "sem __version__")
-                st.write(f"{disp}: {ver}")
-            except Exception as e:
-                st.write(f"{disp}: não instalado ({e})")
-
-
-with st.expander("📦 Status dos índices", expanded=False):
-    def _ok(x): return "✅" if x else "—"
-    st.write("Sphera embeddings:", _ok(E_sph is not None and df_sph is not None))
-    if E_sph is not None and df_sph is not None:
-        st.write(f" • shape: {E_sph.shape} | linhas df: {len(df_sph)}")
-    st.write("GoSee embeddings :", _ok(E_gos is not None and df_gos is not None))
-    if E_gos is not None and df_gos is not None:
-        st.write(f" • shape: {E_gos.shape} | linhas df: {len(df_gos)}")
-    st.write("Docs embeddings  :", _ok(E_his is not None and len(rows_his) > 0))
-    if E_his is not None and rows_his:
-        st.write(f" • shape: {E_his.shape} | chunks: {len(rows_his)}")
-    st.write("Uploads indexados:", len(st.session_state.upld_texts))
-    st.write("Encoder ativo    :", ST_MODEL_NAME)
-
-    with st.expander("🔎 Versões dos pacotes"):
         import importlib, sys
         pkgs = [
             ("torch", "torch"),
