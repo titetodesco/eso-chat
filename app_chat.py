@@ -3,23 +3,26 @@
 #   • Sphera:   data/analytics/sphera_embeddings.npz   + sphera.parquet
 #   • GoSee:    data/analytics/gosee_embeddings.npz    + gosee.parquet
 #   • History:  data/analytics/history_embeddings.npz  + history_texts.jsonl
-#   • WS/Prec/CP: dicionários (parquet/xlsx) + embeddings .npz (com ids, se possível)
 # - Uploads: faz chunk + embeddings em tempo real (Sentence-Transformers)
 # - Injeta apenas TRECHOS recuperados (não envia vetores ao LLM)
+# - WS/Precursores/CP: usa .npz próprios (embeddings + ids + texts), sem depender de contagens da planilha
 # - Sem TF-IDF, sem ONNX: apenas ST + Torch CPU
 
 import os
 import io
+import re
 import json
+import math
 import requests
 import numpy as np
 import pandas as pd
 import streamlit as st
 from pathlib import Path
+from datetime import datetime
 
-# ---------- Contexto (system prompt) ----------
+# ---------- Contexto / System Prompt ----------
 CONTEXT_MD_REL_PATH = Path(__file__).parent / "docs" / "contexto_eso_chat.md"
-DATASETS_CONTEXT_FILE = "datasets_context.md"  # mantido
+DATASETS_CONTEXT_FILE = "datasets_context.md"  # opcional (YAML/MD com descrição de índices)
 
 @st.cache_data(show_spinner=False)
 def load_file_text(p: Path) -> str:
@@ -30,32 +33,33 @@ def load_file_text(p: Path) -> str:
 
 def build_system_prompt() -> str:
     preambulo = (
-        "Você é o ESO-CHAT (segurança operacional).\n"
-        "Siga estritamente as regras do contexto abaixo. Responda em PT-BR por padrão.\n"
-        "Quando usar buscas semânticas, sempre mostre IDs/Fonte e similaridade.\n"
-        "Não invente dados fora dos contextos fornecidos.\n"
+        "Você é o ESO-CHAT (segurança operacional). "
+        "Siga estritamente as regras e convenções do contexto abaixo. "
+        "Responda em PT-BR por padrão. "
+        "Quando usar buscas semânticas, sempre mostre IDs/Fonte e similaridade. "
+        "Não invente dados fora dos contextos fornecidos."
     )
     ctx_md = load_file_text(CONTEXT_MD_REL_PATH)
     return preambulo + "\n\n=== CONTEXTO ESO-CHAT (.md) ===\n" + ctx_md
 
+# Inicializa uma vez por sessão
 if "system_prompt" not in st.session_state:
     st.session_state.system_prompt = build_system_prompt()
 
 # (Opcional) botão para recarregar o .md sem reiniciar o app
 st.sidebar.button(
     "Recarregar contexto (.md)",
-    on_click=lambda: st.session_state.update(system_prompt=build_system_prompt()),
+    on_click=lambda: st.session_state.update(system_prompt=build_system_prompt())
 )
 
 # ---------- Config básica ----------
 st.set_page_config(page_title="ESO • CHAT (Embeddings)", page_icon="💬", layout="wide")
 
 DATA_DIR = "data"
-AN_DIR = os.path.join(DATA_DIR, "analytics")
-XLSX_DIR = os.path.join(DATA_DIR, "xlsx")
+AN_DIR   = os.path.join(DATA_DIR, "analytics")
 ST_MODEL_NAME = os.getenv("ST_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
 
-# Modelo de chat (Ollama-compatible)
+# Modelo de chat (Ollama-compatible). Se não tiver chave, tenta mesmo assim.
 OLLAMA_HOST  = st.secrets.get("OLLAMA_HOST", os.getenv("OLLAMA_HOST", "https://ollama.com"))
 OLLAMA_MODEL = st.secrets.get("OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "gpt-oss:20b"))
 OLLAMA_API_KEY = st.secrets.get("OLLAMA_API_KEY", os.getenv("OLLAMA_API_KEY"))
@@ -85,81 +89,38 @@ try:
 except Exception:
     docx = None
 
-# ---------- Utilidades de rede / LLM ----------
+# ---------- Utilidades ----------
 def ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False, timeout=120):
     payload = {"model": model, "messages": messages, "temperature": float(temperature), "stream": bool(stream)}
     r = requests.post(f"{OLLAMA_HOST}/api/chat", headers=HEADERS_JSON, json=payload, timeout=timeout)
     r.raise_for_status()
     return r.json()
 
-# ---------- Utilidades de vetor ----------
 def l2norm(mat: np.ndarray) -> np.ndarray:
     mat = mat.astype(np.float32, copy=False)
     n = np.linalg.norm(mat, axis=1, keepdims=True) + 1e-9
     return mat / n
 
 def cos_topk(E_db: np.ndarray, q: np.ndarray, k: int) -> list[tuple[int, float]]:
+    # E_db: (n,d) L2; q: (d,) (L2)
     if E_db is None or E_db.size == 0:
         return []
     q = q.astype(np.float32, copy=False)
     q = q / (np.linalg.norm(q) + 1e-9)
-    sims = E_db @ q
+    sims = E_db @ q  # (n,)
     idx = np.argsort(-sims)[:k]
     return [(int(i), float(sims[i])) for i in idx]
 
-def load_npz_with_ids(path: str):
-    """Retorna (E_l2, ids[str] | None). Aceita chaves 'embeddings' e 'ids'."""
-    if not os.path.exists(path):
-        return None, None
-    try:
-        with np.load(path, allow_pickle=True) as z:
-            E = None
-            for key in ("embeddings", "E", "X", "vectors", "vecs"):
-                if key in z:
-                    E = np.array(z[key]).astype(np.float32, copy=False)
-                    break
-            if E is None:
-                # fallback: maior matriz 2D
-                best_k, best_n = None, -1
-                for k in z.files:
-                    arr = z[k]
-                    if isinstance(arr, np.ndarray) and arr.ndim == 2 and arr.shape[0] > best_n:
-                        best_k, best_n = k, arr.shape[0]
-                if best_k is None:
-                    st.warning(f"{os.path.basename(path)} não contém matriz 2D de embeddings.")
-                    return None, None
-                E = np.array(z[best_k]).astype(np.float32, copy=False)
-            ids = None
-            for key in ("ids", "row_ids", "index", "keys"):
-                if key in z:
-                    ids = [str(x) for x in z[key].tolist()]
-                    break
-            return l2norm(E), ids
-    except Exception as e:
-        st.warning(f"Falha ao ler {path}: {e}")
-        return None, None
+def lang_guess_pt(text: str) -> float:
+    """Heurística simples: score ~ presença de tokens PT e acentos."""
+    if not text:
+        return 0.0
+    text_low = text.lower()
+    pt_hits = sum(text_low.count(w) for w in [" que ", " de ", " para ", " com ", " não ", " guindaste ", " cabo "])
+    accents = len(re.findall(r"[áéíóúâêôãõç]", text_low))
+    tokens = max(1, len(text_low.split()))
+    return min(1.0, (pt_hits * 2 + accents) / (tokens / 10 + 1))
 
-def align_df_by_ids(df: pd.DataFrame, id_col: str, ids: list[str], name: str):
-    """Reordena df para a ordem dos ids do .npz (inner-join)."""
-    if df is None or not isinstance(df, pd.DataFrame) or not ids:
-        return df, None
-    if id_col not in df.columns:
-        st.warning(f"[{name}] '{id_col}' não existe no DataFrame — não foi possível alinhar por ids.")
-        return df, None
-    df["_IDX_TMP_"] = np.arange(len(df))
-    m = pd.Series(df["_IDX_TMP_"].values, index=df[id_col].astype(str), dtype="Int64")
-    take_idx = [int(m[i]) for i in ids if i in m.index and pd.notna(m[i])]
-    if not take_idx:
-        st.warning(f"[{name}] Nenhum id do .npz foi encontrado no DataFrame ({id_col}).")
-        df.drop(columns=["_IDX_TMP_"], errors="ignore", inplace=True)
-        return df, None
-    df2 = df.take(take_idx).reset_index(drop=True)
-    df.drop(columns=["_IDX_TMP_"], errors="ignore", inplace=True)
-    if len(df2) != len(ids):
-        st.warning(f"[{name}] Alinhamento parcial: {len(df2)} de {len(ids)} ids casaram (inner-join).")
-    return df2, take_idx
-
-# ---------- Leitura de arquivos arbitrários ----------
 def read_pdf_bytes(b: bytes) -> str:
     if pypdf is None:
         return ""
@@ -268,7 +229,53 @@ def encode_query(q: str) -> np.ndarray:
     v /= (np.linalg.norm(v) + 1e-9)
     return v
 
-# ---------- Carregamento dos catálogos (Sphera/GoSee/History) ----------
+# ---------- Carregamento de embeddings .npz com ids/texts ----------
+def load_npz_bundle(path: str):
+    """
+    Retorna dict: {"E": (n,d) L2, "ids": list[str]|None, "texts": list[str]|None}
+    Aceita chaves comuns: embeddings/E/X/vectors/vecs ; ids ; texts/terms
+    """
+    out = {"E": None, "ids": None, "texts": None}
+    if not os.path.exists(path):
+        return out
+    try:
+        with np.load(path, allow_pickle=True) as z:
+            # matriz
+            E = None
+            for key in ("embeddings", "E", "X", "vectors", "vecs"):
+                if key in z:
+                    E = np.array(z[key]).astype(np.float32, copy=False)
+                    break
+            if E is None:
+                # fallback: maior 2D
+                best_k, best_n = None, -1
+                for k in z.files:
+                    arr = z[k]
+                    if isinstance(arr, np.ndarray) and arr.ndim == 2 and arr.shape[0] > best_n:
+                        best_k, best_n = k, arr.shape[0]
+                if best_k is not None:
+                    E = np.array(z[best_k]).astype(np.float32, copy=False)
+            # ids
+            ids = None
+            for key in ("ids", "row_ids", "index", "keys"):
+                if key in z:
+                    ids = [str(x) for x in list(z[key])]
+                    break
+            # texts
+            texts = None
+            for key in ("texts", "terms", "labels", "strings"):
+                if key in z:
+                    texts = [str(x) for x in list(z[key])]
+                    break
+            out["E"] = l2norm(E) if E is not None else None
+            out["ids"] = ids
+            out["texts"] = texts
+            return out
+    except Exception as e:
+        st.warning(f"Falha ao ler {path}: {e}")
+        return out
+
+# ---------- Caminhos de catálogos (Sphera/GoSee/History) ----------
 SPH_EMB_PATH = os.path.join(AN_DIR, "sphera_embeddings.npz")
 GOS_EMB_PATH = os.path.join(AN_DIR, "gosee_embeddings.npz")
 HIS_EMB_PATH = os.path.join(AN_DIR, "history_embeddings.npz")
@@ -277,21 +284,39 @@ SPH_PQ_PATH = os.path.join(AN_DIR, "sphera.parquet")
 GOS_PQ_PATH = os.path.join(AN_DIR, "gosee.parquet")
 HIS_JSONL   = os.path.join(AN_DIR, "history_texts.jsonl")
 
-def load_parquet_or_none(path):
-    if os.path.exists(path):
-        try:
-            return pd.read_parquet(path)
-        except Exception as e:
-            st.warning(f"Falha ao ler {path}: {e}")
-    return None
+# Dicionários WS / Precursores / CP
+WS_EMB_PATH   = os.path.join(AN_DIR, "ws_embeddings.npz")
+PREC_EMB_PATH = os.path.join(AN_DIR, "prec_embeddings.npz")
+CP_EMB_PATH   = os.path.join(AN_DIR, "cp_embeddings.npz")
 
-E_sph, _ = load_npz_with_ids(SPH_EMB_PATH)
-E_gos, _ = load_npz_with_ids(GOS_EMB_PATH)
-E_his, _ = load_npz_with_ids(HIS_EMB_PATH)
+# ---------- Carrega bundles ----------
+B_sph  = load_npz_bundle(SPH_EMB_PATH)
+B_gos  = load_npz_bundle(GOS_EMB_PATH)
+B_his  = load_npz_bundle(HIS_EMB_PATH)
+B_ws   = load_npz_bundle(WS_EMB_PATH)
+B_prec = load_npz_bundle(PREC_EMB_PATH)
+B_cp   = load_npz_bundle(CP_EMB_PATH)
 
-df_sph = load_parquet_or_none(SPH_PQ_PATH)
-df_gos = load_parquet_or_none(GOS_PQ_PATH)
+E_sph = B_sph["E"]; E_gos = B_gos["E"]; E_his = B_his["E"]
+E_ws  = B_ws["E"];  WS_IDS = B_ws["ids"];   WS_TEXTS = B_ws["texts"]
+E_prec= B_prec["E"];PREC_IDS= B_prec["ids"];PREC_TEXTS= B_prec["texts"]
+E_cp  = B_cp["E"];  CP_IDS  = B_cp["ids"];  CP_TEXTS  = B_cp["texts"]
+
+# Tabelas base (para exibir snippets Sphera/GoSee/History)
+df_sph = None
+df_gos = None
 rows_his = []
+
+if os.path.exists(SPH_PQ_PATH):
+    try:
+        df_sph = pd.read_parquet(SPH_PQ_PATH)
+    except Exception as e:
+        st.warning(f"Falha ao ler {SPH_PQ_PATH}: {e}")
+if os.path.exists(GOS_PQ_PATH):
+    try:
+        df_gos = pd.read_parquet(GOS_PQ_PATH)
+    except Exception as e:
+        st.warning(f"Falha ao ler {GOS_PQ_PATH}: {e}")
 if os.path.exists(HIS_JSONL):
     try:
         with open(HIS_JSONL, "r", encoding="utf-8") as f:
@@ -299,141 +324,6 @@ if os.path.exists(HIS_JSONL):
                 rows_his.append(json.loads(line))
     except Exception as e:
         st.warning(f"Falha ao ler {HIS_JSONL}: {e}")
-
-# ---------- Carregamento dicionários (WS / Precursores / CP) ----------
-WS_EMB_PATH   = os.path.join(AN_DIR, "ws_embeddings.npz")
-PREC_EMB_PATH = os.path.join(AN_DIR, "prec_embeddings.npz")
-CP_EMB_PATH   = os.path.join(AN_DIR, "cp_embeddings.npz")
-
-# Tabelas: tenta primeiro parquet no analytics, depois xlsx no data/xlsx
-WS_TABLE_CANDIDATES = [
-    os.path.join(AN_DIR, "ws.parquet"),
-    os.path.join(XLSX_DIR, "DicionarioWeakSignals.xlsx"),
-    os.path.join(XLSX_DIR, "DicionarioWaekSignals.xlsx"),  # fallback caso de nome antigo
-]
-PREC_TABLE_CANDIDATES = [
-    os.path.join(AN_DIR, "precursores.parquet"),
-    os.path.join(XLSX_DIR, "precursores_expandido.xlsx"),
-]
-CP_TABLE_CANDIDATES = [
-    os.path.join(AN_DIR, "cp.parquet"),
-    os.path.join(XLSX_DIR, "TaxonomiaCP_Por.xlsx"),
-]
-
-def load_table(candidates):
-    for p in candidates:
-        if os.path.exists(p):
-            try:
-                if p.endswith(".parquet"):
-                    return pd.read_parquet(p), p
-                else:
-                    # pega a primeira planilha
-                    return pd.read_excel(p), p
-            except Exception as e:
-                st.warning(f"Falha ao ler {p}: {e}")
-    return None, None
-
-df_ws,   WS_TABLE_SRC   = load_table(WS_TABLE_CANDIDATES)
-df_prec, PREC_TABLE_SRC = load_table(PREC_TABLE_CANDIDATES)
-df_cp,   CP_TABLE_SRC   = load_table(CP_TABLE_CANDIDATES)
-
-E_ws,   WS_IDS   = load_npz_with_ids(WS_EMB_PATH)
-E_prec, PREC_IDS = load_npz_with_ids(PREC_EMB_PATH)
-E_cp,   CP_IDS   = load_npz_with_ids(CP_EMB_PATH)
-
-# ---------- Normalização de colunas / idioma ----------
-def _guess_lang_from_text(sample_text: str) -> str:
-    """Heurística simples para PT vs EN."""
-    if not sample_text:
-        return "pt"
-    s = sample_text.lower()
-    score_pt = 0
-    for token in (" que ", " não ", " para ", " foi ", " guindaste ", " cabo ", " operação "):
-        if token in s:
-            score_pt += 1
-    accented = any(ch in s for ch in "áéíóúâêôãõç")
-    if accented or score_pt >= 2:
-        return "pt"
-    return "en"
-
-def detect_upload_lang(default="pt") -> str:
-    # Toma alguns chunks do upload para avaliar
-    if st.session_state.upld_texts:
-        sample = " ".join(st.session_state.upld_texts[:2])[:2000]
-        return _guess_lang_from_text(sample)
-    return default
-
-def _pick_first(df: pd.DataFrame, cols: list[str]) -> str | None:
-    for c in cols:
-        if c in df.columns:
-            return c
-    return None
-
-def _norm_cols_ws(df: pd.DataFrame, lang: str):
-    id_col = _pick_first(df, ["id","ID","codigo","Código","code","ws_id"])
-    if lang == "pt":
-        term_col = _pick_first(df, ["PT","pt","Termo PT","Termo_PT","Weak Signal (PT)"])
-    else:
-        term_col = _pick_first(df, ["EN","en","Termo EN","Termo_EN","Weak Signal (EN)"])
-    # fallback
-    if term_col is None:
-        term_col = df.select_dtypes(include=["object"]).columns[0]
-    if id_col is None:
-        id_col = df.columns[0]
-    return term_col, id_col
-
-def _norm_cols_prec(df: pd.DataFrame, lang: str):
-    id_col = _pick_first(df, ["id","ID","prec_id","codigo","Código","code"])
-    if lang == "pt":
-        term_col = _pick_first(df, ["Precursor (PT)","Precursor PT","PT","precursor","precursor_pt"])
-    else:
-        term_col = _pick_first(df, ["Precursor EN","EN","precursor_en"])
-    hto_col = _pick_first(df, ["HTO","H-T-O","Tipo","Type","class"])
-    if term_col is None:
-        term_col = df.select_dtypes(include=["object"]).columns[0]
-    if id_col is None:
-        id_col = df.columns[0]
-    return term_col, id_col, hto_col
-
-def _norm_cols_cp(df: pd.DataFrame, lang: str):
-    id_col  = _pick_first(df, ["id","ID","cp_id","codigo","Código","code"])
-    bag_col = _pick_first(df, ["Bag de termos","bag","Bag","Bag of terms","terms"])
-    dim_col = _pick_first(df, ["Dimensão","Dimensao","Dimension","Dimensão EN","Dimension EN"])
-    fat_col = _pick_first(df, ["Fator","Factor","Fator EN","Factor EN"])
-    sub_col = _pick_first(df, ["Sub-fator","Subfator","Subfactor","Sub-fator EN"])
-    # Preferir coluna do idioma na exibição do termo (bag)
-    if lang == "en" and "Bag of terms" in df.columns:
-        bag_col = "Bag of terms"
-    elif lang == "pt" and "Bag de termos" in df.columns:
-        bag_col = "Bag de termos"
-    # fallback
-    if bag_col is None:
-        bag_col = df.select_dtypes(include=["object"]).columns[0]
-    if id_col is None:
-        id_col = df.columns[0]
-    return bag_col, id_col, dim_col, fat_col, sub_col
-
-# ---------- Alinhamento por IDs (se o .npz tiver ids) ----------
-def _check_align(E, df, name, have_ids=False):
-    if E is not None and df is not None and E.shape[0] != len(df) and not have_ids:
-        st.warning(f"[{name}] Embeddings ({E.shape[0]}) e tabela ({len(df)}) com contagem diferente — rótulos podem não bater o índice.")
-
-# alinhamento inicial (usar PT só para descobrir colunas-ID; exibição usa idioma real depois)
-if df_ws is not None and WS_IDS:
-    _, ws_id_col = _norm_cols_ws(df_ws, "pt")
-    df_ws, _ = align_df_by_ids(df_ws, ws_id_col, WS_IDS, "WS")
-
-if df_prec is not None and PREC_IDS:
-    _, prec_id_col_tmp, _ = _norm_cols_prec(df_prec, "pt")
-    df_prec, _ = align_df_by_ids(df_prec, prec_id_col_tmp, PREC_IDS, "Precursores")
-
-if df_cp is not None and CP_IDS:
-    _, cp_id_col_tmp, _, _, _ = _norm_cols_cp(df_cp, "pt")
-    df_cp, _ = align_df_by_ids(df_cp, cp_id_col_tmp, CP_IDS, "CP")
-
-_check_align(E_ws, df_ws, "WS", have_ids=bool(WS_IDS))
-_check_align(E_prec, df_prec, "Precursores", have_ids=bool(PREC_IDS))
-_check_align(E_cp, df_cp, "CP", have_ids=bool(CP_IDS))
 
 # ---------- Sidebar ----------
 st.sidebar.header("Configurações")
@@ -454,24 +344,16 @@ chunk_size  = st.sidebar.slider("Tamanho do chunk", 500, 2000, 1200, 50)
 chunk_ovlp  = st.sidebar.slider("Overlap do chunk", 50, 600, 200, 10)
 upload_raw_max = st.sidebar.slider("Tamanho máx. de UPLOAD_RAW (chars)", 300, 8000, 2500, 100)
 
+st.sidebar.subheader("WS / Precursores / CP (limiares)")
+ws_tau   = st.sidebar.number_input("Limiar WS (0–1)", min_value=0.0, max_value=1.0, value=0.25, step=0.05, format="%.2f")
+prec_tau = st.sidebar.number_input("Limiar Precursores (0–1)", min_value=0.0, max_value=1.0, value=0.25, step=0.05, format="%.2f")
+cp_tau   = st.sidebar.number_input("Limiar CP (0–1)", min_value=0.0, max_value=1.0, value=0.25, step=0.05, format="%.2f")
+max_list = st.sidebar.slider("Top-N p/ WS/Prec/CP", 1, 20, 10, 1)
+
+force_lang = st.sidebar.selectbox("Forçar idioma do dicionário (apenas aviso)", ["auto", "PT", "EN"], index=0)
+
 use_catalog = st.sidebar.checkbox("Injetar datasets_context.md", True)
-
-# --- WS/Precursores/CP (documento → dicionários) ---
-st.sidebar.subheader("Extração: WS / Precursores / CP (do UPLOAD)")
-enable_dict_match = st.sidebar.checkbox("Habilitar extração semântica dos dicionários", True)
-lang_auto = detect_upload_lang()
-ui_lang = st.sidebar.selectbox("Idioma esperado do UPLOAD", ["auto", "pt", "en"], index=0)
-resolved_lang = lang_auto if ui_lang == "auto" else ui_lang
-
-# Limiares
-ws_topk = st.sidebar.slider("Top-K Weak Signals", 0, 20, 10, 1)
-ws_thr  = st.sidebar.slider("Limiar WS (cos)", 0.0, 1.0, 0.25, 0.01)
-
-prec_topk = st.sidebar.slider("Top-K Precursores", 0, 20, 10, 1)
-prec_thr  = st.sidebar.slider("Limiar Precursores (cos)", 0.0, 1.0, 0.25, 0.01)
-
-cp_topk = st.sidebar.slider("Top-K CP", 0, 20, 10, 1)
-cp_thr  = st.sidebar.slider("Limiar CP (cos)", 0.0, 1.0, 0.25, 0.01)
+debug = st.sidebar.checkbox("Mostrar painel de diagnóstico", False)
 
 uploaded_files = st.sidebar.file_uploader(
     "Upload (PDF, DOCX, XLSX, CSV, TXT/MD)",
@@ -512,11 +394,308 @@ if uploaded_files:
             st.session_state.upld_meta.extend(new_meta)
             st.success(f"Upload indexado: {len(new_texts)} chunks.")
 
-def _upload_centroid() -> np.ndarray | None:
-    """Retorna o vetor centróide (L2) dos embeddings do upload (ou None)."""
-    E = st.session_state.upld_emb
-    if E is None or E.size == 0:
+# ---------- Funções de busca ----------
+def search_all(query: str) -> list[str]:
+    """Embute a query e busca nos 4 conjuntos (Sphera/GoSee/Docs/Upload). Retorna blocos formatados."""
+    qv = encode_query(query)
+    blocks: list[tuple[float, str]] = []
+
+    # Sphera
+    if k_sph > 0 and E_sph is not None and df_sph is not None and len(df_sph) >= E_sph.shape[0]:
+        text_col = "Description" if "Description" in df_sph.columns else df_sph.columns[0]
+        id_col = "Event ID" if "Event ID" in df_sph.columns else ("EVENT_NUMBER" if "EVENT_NUMBER" in df_sph.columns else None)
+        hits = cos_topk(E_sph, qv, k=k_sph)
+        for i, s in hits:
+            row = df_sph.iloc[i]
+            evid = row.get(id_col, f"row{i}") if id_col else f"row{i}"
+            snippet = str(row.get(text_col, ""))[:800]
+            blocks.append((s, f"[Sphera/{evid}] (sim={s:.3f})\n{snippet}"))
+
+    # GoSee
+    if k_gos > 0 and E_gos is not None and df_gos is not None and len(df_gos) >= E_gos.shape[0]:
+        text_col = "Observation" if "Observation" in df_gos.columns else df_gos.columns[0]
+        id_col = "ID" if "ID" in df_gos.columns else None
+        hits = cos_topk(E_gos, qv, k=k_gos)
+        for i, s in hits:
+            row = df_gos.iloc[i]
+            gid = row.get(id_col, f"row{i}") if id_col else f"row{i}"
+            snippet = str(row.get(text_col, ""))[:800]
+            blocks.append((s, f"[GoSee/{gid}] (sim={s:.3f})\n{snippet}"))
+
+    # Docs (history)
+    if k_his > 0 and E_his is not None and rows_his:
+        hits = cos_topk(E_his, qv, k=k_his)
+        for i, s in hits:
+            r = rows_his[i]
+            src = f"Docs/{r.get('source','?')}/{r.get('chunk_id', 0)}"
+            snippet = str(r.get("text", ""))[:800]
+            blocks.append((s, f"[{src}] (sim={s:.3f})\n{snippet}"))
+
+    # Upload
+    if k_upl > 0 and st.session_state.upld_emb is not None and len(st.session_state.upld_texts) == st.session_state.upld_emb.shape[0]:
+        hits = cos_topk(st.session_state.upld_emb, qv, k=k_upl)
+        for i, s in hits:
+            meta = st.session_state.upld_meta[i]
+            snippet = st.session_state.upld_texts[i][:800]
+            blocks.append((s, f"[UPLOAD {meta['file']} / {meta['chunk_id']}] (sim={s:.3f})\n{snippet}"))
+
+    blocks.sort(key=lambda x: -x[0])
+    return [b for _, b in blocks]
+
+def get_upload_raw(max_chars: int) -> str:
+    if not st.session_state.upld_texts:
+        return ""
+    buf, total = [], 0
+    for t in st.session_state.upld_texts[:3]:  # 3 trechos é suficiente
+        if total >= max_chars:
+            break
+        t = t[: max_chars - total]
+        buf.append(t)
+        total += len(t)
+    return "\n\n".join(buf).strip()
+
+def build_upload_vector() -> np.ndarray | None:
+    """Retorna um vetor médio dos chunks do upload (L2), para comparar com WS/Prec/CP."""
+    if st.session_state.upld_emb is None or st.session_state.upld_emb.size == 0:
         return None
-    c = E.mean(axis=0)
-    c = c.astype(np.float32)
-    c /= (np.linalg)
+    M = st.session_state.upld_emb
+    v = M.mean(axis=0)
+    v = v.astype(np.float32)
+    v /= (np.linalg.norm(v) + 1e-9)
+    return v
+
+def list_matches(name: str, E: np.ndarray, labels: list[str] | None, ids: list[str] | None, qvec: np.ndarray, tau: float, topn: int):
+    """Retorna lista de (rank, id_str, label, score) filtrando por tau e topn."""
+    if E is None or qvec is None:
+        return []
+    sims = (E @ qvec).astype(float)
+    order = np.argsort(-sims)
+    out = []
+    taken = 0
+    for pos in order:
+        sc = float(sims[pos])
+        if sc < tau:
+            continue
+        lbl = labels[pos] if (labels and pos < len(labels)) else f"{name}_{pos}"
+        rid = ids[pos] if (ids and pos < len(ids)) else str(pos)
+        out.append((len(out)+1, rid, lbl, sc))
+        taken += 1
+        if taken >= topn:
+            break
+    return out
+
+# ---------- Contagem local para queries simples (ex.: Sphera > ano) ----------
+def try_count_sphera_after_year(prompt_text: str) -> str | None:
+    """
+    Detecta padrões do tipo: 'quantos eventos ... sphera ... após/depois/maior que 2023/2024 ...'
+    Faz a contagem direto em df_sph, tentando colunas de data comuns.
+    """
+    if df_sph is None or df_sph.empty:
+        return None
+    txt = prompt_text.lower()
+    if "sphera" not in txt and "event" not in txt and "evento" not in txt:
+        return None
+    # regex para ano
+    m = re.search(r"(?:apó|depois|maior que|superior a)\s*(?:o\s*ano\s*de\s*)?(\d{4})", txt)
+    if not m:
+        # tenta "superior a 2023"
+        m = re.search(r"(?:>\s*|>=\s*)(\d{4})", txt)
+    if not m:
+        return None
+    year = int(m.group(1))
+    # colunas possíveis de data
+    date_cols = [c for c in df_sph.columns if c.lower() in (
+        "event date", "event_date", "date", "ocorrencia", "ocorrência", "data", "eventdate"
+    )]
+    if not date_cols:
+        # tenta inferir por dtype datetime
+        date_cols = [c for c in df_sph.columns if np.issubdtype(df_sph[c].dtype, np.datetime64)]
+    if not date_cols:
+        # tenta parse manual de algumas colunas texto
+        for c in df_sph.columns:
+            try:
+                pd.to_datetime(df_sph[c], errors="raise")
+                date_cols = [c]; break
+            except Exception:
+                continue
+    if not date_cols:
+        return None
+    col = date_cols[0]
+    try:
+        dts = pd.to_datetime(df_sph[col], errors="coerce")
+        cnt = int((dts.dt.year > year).sum())
+        return f"[LOCAL] Contagem Sphera em '{col}' com ano > {year}: **{cnt}** evento(s)."
+    except Exception:
+        return None
+
+# ---------- UI ----------
+st.title("ESO • CHAT — HIST + UPLD (Embeddings preferencial)")
+st.caption("RAG local 100% embeddings (Sphera / GoSee / Docs / Upload) + dicionários (WS/Precursores/CP).")
+
+# Mostrar histórico
+for m in st.session_state.chat:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"])
+
+prompt = st.chat_input("Digite sua pergunta…")
+
+if prompt:
+    st.session_state.chat.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # 0) Handler local para contagens simples (ex.: Sphera > ano)
+    local_note = try_count_sphera_after_year(prompt)
+
+    # 1) Recuperação geral
+    blocks = search_all(prompt)
+
+    # 2) Recorte 'cru' do upload (máx N chars)
+    up_raw = get_upload_raw(upload_raw_max)
+    if up_raw:
+        blocks = [f"[UPLOAD_RAW]\n{up_raw}"] + blocks
+
+    # 3) WS/Precursores/CP vs Upload (semântica)
+    q_upload = build_upload_vector()
+    if q_upload is not None:
+        # aviso de idioma
+        pt_score = lang_guess_pt(up_raw)
+        lang_msg = ""
+        if force_lang == "PT" or (force_lang == "auto" and pt_score >= 0.5):
+            # se os textos do dicionário aparentarem estar em EN, avisar
+            def guess_is_en(texts):
+                if not texts: return False
+                sample = " ".join(texts[:10]).lower()
+                en_hits = sum(sample.count(w) for w in ["the ", "and ", "of ", "with ", "safety "])
+                pt_hits = sum(sample.count(w) for w in [" de ", " que ", " com ", " segurança "])
+                return en_hits > pt_hits
+            if guess_is_en(WS_TEXTS):
+                lang_msg += "⚠️ Upload parece PT, mas WS (npz) aparenta EN. "
+            if guess_is_en(PREC_TEXTS):
+                lang_msg += "⚠️ Precursores aparenta EN. "
+            if guess_is_en(CP_TEXTS):
+                lang_msg += "⚠️ CP aparenta EN. "
+        elif force_lang == "EN" or (force_lang == "auto" and pt_score < 0.5):
+            # se os textos do dicionário aparentarem PT, avisar
+            def guess_is_pt(texts):
+                if not texts: return False
+                sample = " ".join(texts[:10]).lower()
+                return any(t in sample for t in [" de ", " que ", " com ", " segurança ", " guindaste "])
+            if guess_is_pt(WS_TEXTS):
+                lang_msg += "⚠️ Upload parece EN, mas WS (npz) aparenta PT. "
+            if guess_is_pt(PREC_TEXTS):
+                lang_msg += "⚠️ Precursores aparenta PT. "
+            if guess_is_pt(CP_TEXTS):
+                lang_msg += "⚠️ CP aparenta PT. "
+        if lang_msg:
+            blocks.append(f"[LANG] {lang_msg.strip()}")
+
+        # WS
+        ws_hits = list_matches("WS", E_ws, WS_TEXTS, WS_IDS, q_upload, ws_tau, max_list)
+        if ws_hits:
+            lines = ["WS (do dicionário embutido):"]
+            for rnk, rid, lbl, sc in ws_hits:
+                lines.append(f"{rnk}. [WS/{rid}] (sim={sc:.3f}) — {lbl}")
+            blocks.append("\n".join(lines))
+        else:
+            blocks.append("WS: nenhum termo do dicionário atingiu o limiar.")
+
+        # Precursores
+        prec_hits = list_matches("PRE", E_prec, PREC_TEXTS, PREC_IDS, q_upload, prec_tau, max_list)
+        if prec_hits:
+            lines = ["Precursores (dicionário embutido):"]
+            for rnk, rid, lbl, sc in prec_hits:
+                lines.append(f"{rnk}. [Prec/{rid}] (sim={sc:.3f}) — {lbl}")
+            blocks.append("\n".join(lines))
+        else:
+            blocks.append("Precursores: nenhum termo do dicionário atingiu o limiar.")
+
+        # CP
+        cp_hits = list_matches("CP", E_cp, CP_TEXTS, CP_IDS, q_upload, cp_tau, max_list)
+        if cp_hits:
+            lines = ["Taxonomia CP (bag-of-terms embutido):"]
+            for rnk, rid, lbl, sc in cp_hits:
+                lines.append(f"{rnk}. [CP/{rid}] (sim={sc:.3f}) — {lbl}")
+            blocks.append("\n".join(lines))
+        else:
+            blocks.append("CP: nenhum item do dicionário atingiu o limiar.")
+    else:
+        blocks.append("⚠️ Sem embeddings de upload (faça upload de um arquivo para comparar com WS/Prec/CP).")
+
+    # 4) Monta mensagens p/ LLM
+    msgs = [{"role": "system", "content": st.session_state.system_prompt}]
+
+    if use_catalog and os.path.exists(DATASETS_CONTEXT_FILE):
+        try:
+            with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
+                msgs.append({"role": "system", "content": f.read()})
+        except Exception:
+            pass
+
+    if blocks:
+        ctx = "\n\n".join(blocks)
+        if local_note:
+            ctx = local_note + "\n\n" + ctx
+        msgs.append({"role": "user", "content": f"CONTEXTOS (HIST+UPLD+DICT):\n{ctx}"})
+        msgs.append({"role": "user", "content": f"PERGUNTA: {prompt}"})
+    else:
+        msgs.append({"role": "user", "content": prompt})
+
+    # 5) Resposta do modelo
+    with st.chat_message("assistant"):
+        with st.spinner("Consultando o modelo…"):
+            try:
+                resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
+                content = resp.get("message", {}).get("content", "").strip() or json.dumps(resp)[:1200]
+            except Exception as e:
+                content = f"Falha ao consultar o modelo: {e}"
+            st.markdown(content)
+    st.session_state.chat.append({"role": "assistant", "content": content})
+
+# ---------- Painel / Diagnóstico ----------
+if debug:
+    with st.expander("📦 Status dos índices", expanded=True):
+        def _ok(x): return "✅" if x else "—"
+        st.write("Sphera embeddings:", _ok(E_sph is not None and df_sph is not None))
+        if E_sph is not None and df_sph is not None:
+            st.write(f" • shape: {E_sph.shape} | linhas df: {len(df_sph)}")
+        st.write("GoSee embeddings :", _ok(E_gos is not None and df_gos is not None))
+        if E_gos is not None and df_gos is not None:
+            st.write(f" • shape: {E_gos.shape} | linhas df: {len(df_gos)}")
+        st.write("Docs embeddings  :", _ok(E_his is not None and len(rows_his) > 0))
+        if E_his is not None and rows_his:
+            st.write(f" • shape: {E_his.shape} | chunks: {len(rows_his)}")
+        st.write("Uploads indexados:", len(st.session_state.upld_texts))
+        st.write("Encoder ativo    :", ST_MODEL_NAME)
+
+        st.write("---")
+        def _bundle_info(name, B):
+            E = B["E"]; ids = B["ids"]; texts = B["texts"]
+            st.write(f"{name}: E={'None' if E is None else E.shape}, ids={0 if ids is None else len(ids)}, texts={0 if texts is None else len(texts)}")
+            if texts:
+                st.caption(f"Exemplo: {texts[0][:120]}")
+        _bundle_info("WS", B_ws)
+        _bundle_info("Precursores", B_prec)
+        _bundle_info("CP", B_cp)
+
+    with st.expander("🔎 Versões dos pacotes", expanded=False):
+        import importlib, sys
+        pkgs = [
+            ("torch", "torch"),
+            ("transformers", "transformers"),
+            ("sentence-transformers", "sentence_transformers"),
+            ("pandas", "pandas"),
+            ("numpy", "numpy"),
+            ("pyarrow", "pyarrow"),
+            ("pypdf", "pypdf"),
+            ("python-docx", "docx"),
+            ("scikit-learn", "sklearn"),
+        ]
+        st.write("Python:", sys.version)
+        for disp, mod in pkgs:
+            try:
+                m = importlib.import_module(mod)
+                ver = getattr(m, "__version__", "sem __version__")
+                st.write(f"{disp}: {ver}")
+            except Exception as e:
+                st.write(f"{disp}: não instalado ({e})")
