@@ -1,28 +1,25 @@
-# app_chat.py — ESO • CHAT (Embeddings-only)
+# app_chat.py — ESO • CHAT (Embeddings-only)  — v2 (WS/Precursores/CP patches)
 # - Busca SEMÂNTICA usando embeddings:
 #   • Sphera:   data/analytics/sphera_embeddings.npz   + sphera.parquet
 #   • GoSee:    data/analytics/gosee_embeddings.npz    + gosee.parquet
 #   • History:  data/analytics/history_embeddings.npz  + history_texts.jsonl
 # - Uploads: faz chunk + embeddings em tempo real (Sentence-Transformers)
 # - Injeta apenas TRECHOS recuperados (não envia vetores ao LLM)
-# - WS/Precursores/CP: usa .npz próprios (embeddings + ids + texts), sem depender de contagens da planilha
+# - Taxonomias (WS/Precursores/CP): usa SOMENTE embeddings pré-gerados dos dicionários
 # - Sem TF-IDF, sem ONNX: apenas ST + Torch CPU
 
 import os
 import io
-import re
 import json
-import math
-import requests
+from pathlib import Path
 import numpy as np
 import pandas as pd
+import requests
 import streamlit as st
-from pathlib import Path
-from datetime import datetime
 
-# ---------- Contexto / System Prompt ----------
+# ========== Contexto (system prompt) ==========
 CONTEXT_MD_REL_PATH = Path(__file__).parent / "docs" / "contexto_eso_chat.md"
-DATASETS_CONTEXT_FILE = "datasets_context.md"  # opcional (YAML/MD com descrição de índices)
+DATASETS_CONTEXT_FILE = "datasets_context.md"  # opcional, em texto
 
 @st.cache_data(show_spinner=False)
 def load_file_text(p: Path) -> str:
@@ -33,30 +30,31 @@ def load_file_text(p: Path) -> str:
 
 def build_system_prompt() -> str:
     preambulo = (
-        "Você é o ESO-CHAT (segurança operacional). "
-        "Siga estritamente as regras e convenções do contexto abaixo. "
-        "Responda em PT-BR por padrão. "
-        "Quando usar buscas semânticas, sempre mostre IDs/Fonte e similaridade. "
-        "Não invente dados fora dos contextos fornecidos."
+        "Você é o ESO-CHAT (segurança operacional).\n"
+        "Responda em PT-BR por padrão.\n"
+        "Siga as regras do contexto abaixo e NÃO invente dados fora dos blocos de contexto.\n"
+        "Quando usar buscas semânticas, sempre mostre IDs/Fonte e similaridade.\n"
+        "Para Weak Signals, Precursores e Taxonomia CP, utilize SOMENTE os itens listados nos blocos [WS_MATCH], [PREC_MATCH] e [CP_MATCH].\n"
     )
     ctx_md = load_file_text(CONTEXT_MD_REL_PATH)
     return preambulo + "\n\n=== CONTEXTO ESO-CHAT (.md) ===\n" + ctx_md
 
-# Inicializa uma vez por sessão
 if "system_prompt" not in st.session_state:
     st.session_state.system_prompt = build_system_prompt()
 
-# (Opcional) botão para recarregar o .md sem reiniciar o app
+# botão para recarregar o .md sem reiniciar o app
 st.sidebar.button(
     "Recarregar contexto (.md)",
     on_click=lambda: st.session_state.update(system_prompt=build_system_prompt())
 )
 
-# ---------- Config básica ----------
+# ========== Config básica ==========
 st.set_page_config(page_title="ESO • CHAT (Embeddings)", page_icon="💬", layout="wide")
 
 DATA_DIR = "data"
-AN_DIR   = os.path.join(DATA_DIR, "analytics")
+AN_DIR = os.path.join(DATA_DIR, "analytics")
+ALT_DIR = "/mnt/data"  # fallback para arquivos enviados no runtime
+
 ST_MODEL_NAME = os.getenv("ST_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
 
 # Modelo de chat (Ollama-compatible). Se não tiver chave, tenta mesmo assim.
@@ -65,7 +63,7 @@ OLLAMA_MODEL = st.secrets.get("OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "gpt-oss
 OLLAMA_API_KEY = st.secrets.get("OLLAMA_API_KEY", os.getenv("OLLAMA_API_KEY"))
 HEADERS_JSON = {"Authorization": f"Bearer {OLLAMA_API_KEY}", "Content-Type": "application/json"} if OLLAMA_API_KEY else {"Content-Type": "application/json"}
 
-# ---------- Dependências necessárias ----------
+# ========== Dependências (falha elegante) ==========
 def _fatal(msg: str):
     st.error(msg)
     st.stop()
@@ -89,7 +87,7 @@ try:
 except Exception:
     docx = None
 
-# ---------- Utilidades ----------
+# ========== Utilidades ==========
 def ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False, timeout=120):
     payload = {"model": model, "messages": messages, "temperature": float(temperature), "stream": bool(stream)}
     r = requests.post(f"{OLLAMA_HOST}/api/chat", headers=HEADERS_JSON, json=payload, timeout=timeout)
@@ -111,15 +109,64 @@ def cos_topk(E_db: np.ndarray, q: np.ndarray, k: int) -> list[tuple[int, float]]
     idx = np.argsort(-sims)[:k]
     return [(int(i), float(sims[i])) for i in idx]
 
-def lang_guess_pt(text: str) -> float:
-    """Heurística simples: score ~ presença de tokens PT e acentos."""
-    if not text:
-        return 0.0
-    text_low = text.lower()
-    pt_hits = sum(text_low.count(w) for w in [" que ", " de ", " para ", " com ", " não ", " guindaste ", " cabo "])
-    accents = len(re.findall(r"[áéíóúâêôãõç]", text_low))
-    tokens = max(1, len(text_low.split()))
-    return min(1.0, (pt_hits * 2 + accents) / (tokens / 10 + 1))
+def batched_cosine_max(E_dict: np.ndarray, E_chunks: np.ndarray) -> np.ndarray:
+    """
+    Para cada item do dicionário (linha em E_dict), obtém a similaridade máxima vs. todos os chunks do upload (E_chunks).
+    Retorna vetor (n_dict,) com os máximos.
+    """
+    if E_dict is None or E_chunks is None or E_dict.size == 0 or E_chunks.size == 0:
+        return np.zeros((0,), dtype=np.float32) if (E_dict is None or E_dict.size == 0) else np.zeros((E_dict.shape[0],), dtype=np.float32)
+    # ambos já normalizados
+    sims = E_dict @ E_chunks.T  # (n_dict, n_chunks)
+    return sims.max(axis=1)     # (n_dict,)
+
+def load_npz_embeddings(path: str) -> np.ndarray | None:
+    if not os.path.exists(path):
+        return None
+    try:
+        with np.load(path, allow_pickle=True) as z:
+            for key in ("embeddings", "E", "X", "vectors", "vecs"):
+                if key in z:
+                    E = np.array(z[key]).astype(np.float32, copy=False)
+                    return l2norm(E)
+            # fallback: maior matriz 2D
+            best_k, best_n = None, -1
+            for k in z.files:
+                arr = z[k]
+                if isinstance(arr, np.ndarray) and arr.ndim == 2 and arr.shape[0] > best_n:
+                    best_k, best_n = k, arr.shape[0]
+            if best_k is None:
+                st.warning(f"{os.path.basename(path)} não contém matriz 2D de embeddings.")
+                return None
+            E = np.array(z[best_k]).astype(np.float32, copy=False)
+            return l2norm(E)
+    except Exception as e:
+        st.warning(f"Falha ao ler {path}: {e}")
+        return None
+
+def load_npz_text_id(path: str):
+    """
+    Tenta carregar 'texts' e 'ids' de um .npz (quando presentes).
+    Retorna (ids_list|None, texts_list|None).
+    """
+    if not os.path.exists(path):
+        return None, None
+    ids, texts = None, None
+    try:
+        with np.load(path, allow_pickle=True) as z:
+            for key in ("texts", "labels", "label_texts"):
+                if key in z:
+                    t = z[key]
+                    texts = list(t.tolist()) if hasattr(t, "tolist") else list(t)
+                    break
+            for key in ("ids", "id", "indexes"):
+                if key in z:
+                    i = z[key]
+                    ids = list(i.tolist()) if hasattr(i, "tolist") else list(i)
+                    break
+    except Exception:
+        pass
+    return ids, texts
 
 def read_pdf_bytes(b: bytes) -> str:
     if pypdf is None:
@@ -189,7 +236,18 @@ def chunk_text(text: str, max_chars=1200, overlap=200):
         start = max(0, end - ov)
     return parts
 
-# ---------- Estado ----------
+def detect_lang_pt(text: str) -> bool:
+    """Heurística simples: se muitas stop-words PT aparecerem, assume PT."""
+    if not text:
+        return True
+    pt_sw = {"que", "não", "para", "com", "uma", "como", "foi", "estava", "de", "do", "da", "no", "na", "os", "as", "um", "uma"}
+    en_sw = {"the", "and", "with", "for", "was", "were", "is", "are", "of", "to", "in", "on"}
+    t = text.lower()
+    pt_hits = sum(1 for w in pt_sw if f" {w} " in f" {t} ")
+    en_hits = sum(1 for w in en_sw if f" {w} " in f" {t} ")
+    return pt_hits >= en_hits
+
+# ========== Estado ==========
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
@@ -200,6 +258,8 @@ if "upld_meta" not in st.session_state:
     st.session_state.upld_meta = []       # lista[dict]
 if "upld_emb" not in st.session_state:
     st.session_state.upld_emb = None      # np.ndarray (n,d) L2
+if "upld_lang_pt" not in st.session_state:
+    st.session_state.upld_lang_pt = True  # assume PT até ler upload
 
 # Encoder ST singleton
 if "st_encoder" not in st.session_state:
@@ -229,95 +289,41 @@ def encode_query(q: str) -> np.ndarray:
     v /= (np.linalg.norm(v) + 1e-9)
     return v
 
-# ---------- Carregamento de embeddings .npz com ids/texts ----------
-def load_npz_bundle(path: str):
-    """
-    Retorna dict: {"E": (n,d) L2, "ids": list[str]|None, "texts": list[str]|None}
-    Aceita chaves comuns: embeddings/E/X/vectors/vecs ; ids ; texts/terms
-    """
-    out = {"E": None, "ids": None, "texts": None}
-    if not os.path.exists(path):
-        return out
-    try:
-        with np.load(path, allow_pickle=True) as z:
-            # matriz
-            E = None
-            for key in ("embeddings", "E", "X", "vectors", "vecs"):
-                if key in z:
-                    E = np.array(z[key]).astype(np.float32, copy=False)
-                    break
-            if E is None:
-                # fallback: maior 2D
-                best_k, best_n = None, -1
-                for k in z.files:
-                    arr = z[k]
-                    if isinstance(arr, np.ndarray) and arr.ndim == 2 and arr.shape[0] > best_n:
-                        best_k, best_n = k, arr.shape[0]
-                if best_k is not None:
-                    E = np.array(z[best_k]).astype(np.float32, copy=False)
-            # ids
-            ids = None
-            for key in ("ids", "row_ids", "index", "keys"):
-                if key in z:
-                    ids = [str(x) for x in list(z[key])]
-                    break
-            # texts
-            texts = None
-            for key in ("texts", "terms", "labels", "strings"):
-                if key in z:
-                    texts = [str(x) for x in list(z[key])]
-                    break
-            out["E"] = l2norm(E) if E is not None else None
-            out["ids"] = ids
-            out["texts"] = texts
-            return out
-    except Exception as e:
-        st.warning(f"Falha ao ler {path}: {e}")
-        return out
+# ========== Carregamento dos catálogos (embeddings + texto base) ==========
+def path_first_existing(*candidates: str) -> str | None:
+    for p in candidates:
+        if p and os.path.exists(p):
+            return p
+    return None
 
-# ---------- Caminhos de catálogos (Sphera/GoSee/History) ----------
-SPH_EMB_PATH = os.path.join(AN_DIR, "sphera_embeddings.npz")
-GOS_EMB_PATH = os.path.join(AN_DIR, "gosee_embeddings.npz")
-HIS_EMB_PATH = os.path.join(AN_DIR, "history_embeddings.npz")
+# Sphera/GoSee/History (como antes)
+SPH_EMB_PATH = path_first_existing(os.path.join(AN_DIR, "sphera_embeddings.npz"))
+GOS_EMB_PATH = path_first_existing(os.path.join(AN_DIR, "gosee_embeddings.npz"))
+HIS_EMB_PATH = path_first_existing(os.path.join(AN_DIR, "history_embeddings.npz"))
 
-SPH_PQ_PATH = os.path.join(AN_DIR, "sphera.parquet")
-GOS_PQ_PATH = os.path.join(AN_DIR, "gosee.parquet")
-HIS_JSONL   = os.path.join(AN_DIR, "history_texts.jsonl")
+SPH_PQ_PATH  = path_first_existing(os.path.join(AN_DIR, "sphera.parquet"))
+GOS_PQ_PATH  = path_first_existing(os.path.join(AN_DIR, "gosee.parquet"))
+HIS_JSONL    = path_first_existing(os.path.join(AN_DIR, "history_texts.jsonl"))
 
-# Dicionários WS / Precursores / CP
-WS_EMB_PATH   = os.path.join(AN_DIR, "ws_embeddings.npz")
-PREC_EMB_PATH = os.path.join(AN_DIR, "prec_embeddings.npz")
-CP_EMB_PATH   = os.path.join(AN_DIR, "cp_embeddings.npz")
+E_sph = load_npz_embeddings(SPH_EMB_PATH) if SPH_EMB_PATH else None
+E_gos = load_npz_embeddings(GOS_EMB_PATH) if GOS_EMB_PATH else None
+E_his = load_npz_embeddings(HIS_EMB_PATH) if HIS_EMB_PATH else None
 
-# ---------- Carrega bundles ----------
-B_sph  = load_npz_bundle(SPH_EMB_PATH)
-B_gos  = load_npz_bundle(GOS_EMB_PATH)
-B_his  = load_npz_bundle(HIS_EMB_PATH)
-B_ws   = load_npz_bundle(WS_EMB_PATH)
-B_prec = load_npz_bundle(PREC_EMB_PATH)
-B_cp   = load_npz_bundle(CP_EMB_PATH)
-
-E_sph = B_sph["E"]; E_gos = B_gos["E"]; E_his = B_his["E"]
-E_ws  = B_ws["E"];  WS_IDS = B_ws["ids"];   WS_TEXTS = B_ws["texts"]
-E_prec= B_prec["E"];PREC_IDS= B_prec["ids"];PREC_TEXTS= B_prec["texts"]
-E_cp  = B_cp["E"];  CP_IDS  = B_cp["ids"];  CP_TEXTS  = B_cp["texts"]
-
-# Tabelas base (para exibir snippets Sphera/GoSee/History)
 df_sph = None
 df_gos = None
 rows_his = []
 
-if os.path.exists(SPH_PQ_PATH):
+if SPH_PQ_PATH:
     try:
         df_sph = pd.read_parquet(SPH_PQ_PATH)
     except Exception as e:
         st.warning(f"Falha ao ler {SPH_PQ_PATH}: {e}")
-if os.path.exists(GOS_PQ_PATH):
+if GOS_PQ_PATH:
     try:
         df_gos = pd.read_parquet(GOS_PQ_PATH)
     except Exception as e:
         st.warning(f"Falha ao ler {GOS_PQ_PATH}: {e}")
-if os.path.exists(HIS_JSONL):
+if HIS_JSONL:
     try:
         with open(HIS_JSONL, "r", encoding="utf-8") as f:
             for line in f:
@@ -325,35 +331,206 @@ if os.path.exists(HIS_JSONL):
     except Exception as e:
         st.warning(f"Falha ao ler {HIS_JSONL}: {e}")
 
-# ---------- Sidebar ----------
-st.sidebar.header("Configurações")
-with st.sidebar.expander("Modelo de Resposta", expanded=False):
-    st.write("Host:", OLLAMA_HOST)
-    st.write("Modelo:", OLLAMA_MODEL)
-    if not OLLAMA_API_KEY:
-        st.info("Sem OLLAMA_API_KEY — ok para ambientes locais se o host não exigir auth.")
+# ========== WS/Precursores/CP — embeddings + labels ==========
+def load_labels_any(*cands: str) -> pd.DataFrame | None:
+    p = path_first_existing(*cands)
+    if not p:
+        return None
+    try:
+        if p.endswith(".parquet"):
+            return pd.read_parquet(p)
+        if p.endswith(".csv"):
+            return pd.read_csv(p)
+        if p.endswith(".jsonl") or p.endswith(".json"):
+            rows = []
+            with open(p, "r", encoding="utf-8") as f:
+                for line in f:
+                    rows.append(json.loads(line))
+            return pd.DataFrame(rows)
+        if p.endswith(".xlsx") or p.endswith(".xls"):
+            xls = pd.ExcelFile(p)
+            # concat todas as sheets
+            frames = [xls.parse(s) for s in xls.sheet_names]
+            return pd.concat(frames, ignore_index=True)
+    except Exception as e:
+        st.warning(f"Falha ao ler labels {p}: {e}")
+        return None
+    return None
 
-st.sidebar.subheader("Recuperação (Embeddings)")
+# caminhos principais (repo) e alternativos (/mnt/data)
+WS_NPZ = path_first_existing(os.path.join(AN_DIR, "ws_embeddings.npz"),
+                             os.path.join(ALT_DIR, "ws_embeddings.npz"))
+PREC_NPZ = path_first_existing(os.path.join(AN_DIR, "prec_embeddings.npz"),
+                               os.path.join(ALT_DIR, "prec_embeddings.npz"),
+                               os.path.join(ALT_DIR, "prec_vectors.npz"))
+CP_NPZ = path_first_existing(os.path.join(AN_DIR, "cp_embeddings.npz"),
+                             os.path.join(ALT_DIR, "cp_embeddings.npz"))
+
+# labels/ids possíveis
+WS_LABELS = load_labels_any(
+    os.path.join(AN_DIR, "ws_embeddings.parquet"),
+    os.path.join(AN_DIR, "ws_labels.parquet"),
+    os.path.join(ALT_DIR, "ws_labels.parquet"),
+    os.path.join(ALT_DIR, "ws_labels.jsonl"),
+    os.path.join(ALT_DIR, "ws_labels.csv")
+)
+
+PREC_LABELS = load_labels_any(
+    os.path.join(AN_DIR, "precursors.parquet"),
+    os.path.join(AN_DIR, "precursors.csv"),
+    os.path.join(ALT_DIR, "precursors.parquet"),
+    os.path.join(ALT_DIR, "precursors.csv"),
+    os.path.join(ALT_DIR, "prec_labels.jsonl"),
+    os.path.join(DATA_DIR, "xlsx", "precursores_expandido.xlsx"),
+    os.path.join(ALT_DIR, "precursores_expandido.xlsx"),
+)
+
+CP_LABELS = load_labels_any(
+    os.path.join(AN_DIR, "cp_labels.parquet"),
+    os.path.join(ALT_DIR, "cp_labels.parquet"),
+    os.path.join(DATA_DIR, "xlsx", "TaxonomiaCP_Por.xlsx"),
+    os.path.join(AN_DIR, "cp_embeddings.parquet"),
+)
+
+# carregar embeddings
+E_ws   = load_npz_embeddings(WS_NPZ)   if WS_NPZ   else None
+E_prec = load_npz_embeddings(PREC_NPZ) if PREC_NPZ else None
+E_cp   = load_npz_embeddings(CP_NPZ)   if CP_NPZ   else None
+
+# tentar obter ids/texts dos .npz
+ws_ids_npz, ws_texts_npz     = load_npz_text_id(WS_NPZ)   if WS_NPZ   else (None, None)
+prec_ids_npz, prec_texts_npz = load_npz_text_id(PREC_NPZ) if PREC_NPZ else (None, None)
+cp_ids_npz, cp_texts_npz     = load_npz_text_id(CP_NPZ)   if CP_NPZ   else (None, None)
+
+def extract_label_cols(df: pd.DataFrame, pt_cols: list[str], en_cols: list[str]):
+    pt = None
+    en = None
+    for c in pt_cols:
+        if c in df.columns:
+            pt = df[c].astype(str).tolist()
+            break
+    for c in en_cols:
+        if c in df.columns:
+            en = df[c].astype(str).tolist()
+            break
+    # fallback: se não tiver PT/EN, use uma coluna "text"/"label"/"term" se existir
+    if pt is None and en is None:
+        for c in ("text", "label", "term", "bag", "bag_pt", "bag_en"):
+            if c in df.columns:
+                pt = df[c].astype(str).tolist()
+                en = pt
+                break
+    return pt, en
+
+# tentar extrair PT/EN das labels
+ws_pt, ws_en = None, None
+if WS_LABELS is not None:
+    ws_pt, ws_en = extract_label_cols(WS_LABELS, pt_cols=["PT", "pt"], en_cols=["EN", "en"])
+
+prec_pt, prec_en = None, None
+if PREC_LABELS is not None:
+    prec_pt, prec_en = extract_label_cols(PREC_LABELS, pt_cols=["Precursor_PT", "PT", "prec_pt", "Precursor (PT)"],
+                                          en_cols=["Precursor_EN", "EN", "prec_en", "Precursor (EN)"])
+
+cp_pt, cp_en = None, None
+if CP_LABELS is not None:
+    cp_pt, cp_en = extract_label_cols(CP_LABELS,
+                                      pt_cols=["Bag de termos", "Bag_de_termos", "bag_pt", "bag_terms_pt"],
+                                      en_cols=["Bag of terms", "bag_en", "bag_terms_en"])
+
+def safe_len(x) -> int:
+    try:
+        return len(x)
+    except Exception:
+        return 0
+
+# sanidade: alinhar labels aos embeddings por tamanho; se não bater, mostrar aviso e usar npz texts se existir
+def align_labels(E: np.ndarray, labels_pt, labels_en, npz_texts):
+    nE = E.shape[0] if E is not None else 0
+    n_pt = safe_len(labels_pt)
+    n_en = safe_len(labels_en)
+    n_npz = safe_len(npz_texts)
+    notes = []
+
+    labels_final_pt, labels_final_en = None, None
+
+    if nE == 0:
+        return None, None, ["Sem embeddings."]
+
+    # caso ideal: alguma lista bate nE
+    if n_pt == nE:
+        labels_final_pt = labels_pt
+    if n_en == nE:
+        labels_final_en = labels_en
+
+    # se nenhuma bate, mas npz_texts bate, usa como PT e EN
+    if labels_final_pt is None and labels_final_en is None and n_npz == nE:
+        labels_final_pt = npz_texts
+        labels_final_en = npz_texts
+        notes.append("Labels ausentes/desalinhados — usando 'texts' do .npz como rótulos.")
+
+    # se só uma bate, duplica na outra
+    if labels_final_pt is None and labels_final_en is not None:
+        labels_final_pt = labels_final_en
+        notes.append("PT rótulos ausentes — usando EN como PT.")
+    if labels_final_en is None and labels_final_pt is not None:
+        labels_final_en = labels_final_pt
+        notes.append("EN rótulos ausentes — usando PT como EN.")
+
+    # nenhum bate: corta/expande de forma segura se existir alguma lista > 0
+    if labels_final_pt is None and labels_final_en is None:
+        any_labels = None
+        for cand in (labels_pt, labels_en, npz_texts):
+            if safe_len(cand) > 0:
+                any_labels = cand
+                break
+        if any_labels is not None:
+            if safe_len(any_labels) >= nE:
+                labels_final_pt = any_labels[:nE]
+                labels_final_en = any_labels[:nE]
+            else:
+                # expande com placeholders
+                fill = ["—"] * (nE - safe_len(any_labels))
+                tmp = list(any_labels) + fill
+                labels_final_pt = tmp
+                labels_final_en = tmp
+            notes.append("Rótulo e embeddings com contagem diferente — ajustado por corte/preenchimento.")
+        else:
+            labels_final_pt = ["—"] * nE
+            labels_final_en = ["—"] * nE
+            notes.append("Sem rótulos — usando placeholders.")
+
+    return labels_final_pt, labels_final_en, notes
+
+ws_labels_pt, ws_labels_en, ws_notes     = align_labels(E_ws,   ws_pt,   ws_en,   ws_texts_npz)
+prec_labels_pt, prec_labels_en, prec_notes = align_labels(E_prec, prec_pt, prec_en, prec_texts_npz)
+cp_labels_pt, cp_labels_en, cp_notes     = align_labels(E_cp,   cp_pt,   cp_en,   cp_texts_npz)
+
+# ========== Sidebar ==========
+st.sidebar.header("Configurações • Modelo")
+st.sidebar.write("Host:", OLLAMA_HOST)
+st.sidebar.write("Modelo:", OLLAMA_MODEL)
+if not OLLAMA_API_KEY:
+    st.sidebar.info("Sem OLLAMA_API_KEY — ok para ambientes locais se o host não exigir auth.")
+
+st.sidebar.header("Recuperação (Embeddings)")
 k_sph = st.sidebar.slider("Top-K Sphera", 0, 10, 5, 1)
 k_gos = st.sidebar.slider("Top-K GoSee",  0, 10, 5, 1)
 k_his = st.sidebar.slider("Top-K Docs",   0, 10, 3, 1)
 k_upl = st.sidebar.slider("Top-K Upload", 0, 10, 5, 1)
 
-st.sidebar.subheader("Upload")
-chunk_size  = st.sidebar.slider("Tamanho do chunk", 500, 2000, 1200, 50)
-chunk_ovlp  = st.sidebar.slider("Overlap do chunk", 50, 600, 200, 10)
+st.sidebar.header("Upload")
+chunk_size     = st.sidebar.slider("Tamanho do chunk", 500, 2000, 1200, 50)
+chunk_ovlp     = st.sidebar.slider("Overlap do chunk", 50, 600, 200, 10)
 upload_raw_max = st.sidebar.slider("Tamanho máx. de UPLOAD_RAW (chars)", 300, 8000, 2500, 100)
 
-st.sidebar.subheader("WS / Precursores / CP (limiares)")
-ws_tau   = st.sidebar.number_input("Limiar WS (0–1)", min_value=0.0, max_value=1.0, value=0.25, step=0.05, format="%.2f")
-prec_tau = st.sidebar.number_input("Limiar Precursores (0–1)", min_value=0.0, max_value=1.0, value=0.25, step=0.05, format="%.2f")
-cp_tau   = st.sidebar.number_input("Limiar CP (0–1)", min_value=0.0, max_value=1.0, value=0.25, step=0.05, format="%.2f")
-max_list = st.sidebar.slider("Top-N p/ WS/Prec/CP", 1, 20, 10, 1)
-
-force_lang = st.sidebar.selectbox("Forçar idioma do dicionário (apenas aviso)", ["auto", "PT", "EN"], index=0)
-
 use_catalog = st.sidebar.checkbox("Injetar datasets_context.md", True)
-debug = st.sidebar.checkbox("Mostrar painel de diagnóstico", False)
+
+st.sidebar.header("Taxonomias (WS/Prec/CP)")
+ws_threshold   = st.sidebar.slider("Limiar WS (cos)",   0.0, 1.0, 0.25, 0.01)
+prec_threshold = st.sidebar.slider("Limiar Prec (cos)", 0.0, 1.0, 0.25, 0.01)
+cp_threshold   = st.sidebar.slider("Limiar CP (cos)",   0.0, 1.0, 0.25, 0.01)
+max_per_dict   = st.sidebar.slider("Máx. itens por grupo (WS/Prec/CP)", 1, 20, 10, 1)
 
 uploaded_files = st.sidebar.file_uploader(
     "Upload (PDF, DOCX, XLSX, CSV, TXT/MD)",
@@ -371,30 +548,35 @@ with c2:
     if st.button("Limpar chat", use_container_width=True):
         st.session_state.chat = []
 
-# ---------- Indexação de Uploads (embeddings em sessão) ----------
+# ========== Indexação de Uploads (embeddings em sessão) ==========
+def update_upload_embeddings(files):
+    new_texts, new_meta = [], []
+    for uf in files:
+        try:
+            raw = read_any(uf)
+            parts = chunk_text(raw, max_chars=chunk_size, overlap=chunk_ovlp)
+            for i, p in enumerate(parts):
+                new_texts.append(p)
+                new_meta.append({"file": uf.name, "chunk_id": i})
+        except Exception as e:
+            st.warning(f"Falha ao processar {uf.name}: {e}")
+    if new_texts:
+        # lingua
+        st.session_state.upld_lang_pt = detect_lang_pt(" ".join(new_texts[:3]))
+        M_new = encode_texts(new_texts, batch_size=64)
+        if st.session_state.upld_emb is None:
+            st.session_state.upld_emb = M_new
+        else:
+            st.session_state.upld_emb = np.vstack([st.session_state.upld_emb, M_new])
+        st.session_state.upld_texts.extend(new_texts)
+        st.session_state.upld_meta.extend(new_meta)
+        st.success(f"Upload indexado: {len(new_texts)} chunks.")
+
 if uploaded_files:
     with st.spinner("Lendo e embutindo uploads (embeddings)…"):
-        new_texts, new_meta = [], []
-        for uf in uploaded_files:
-            try:
-                raw = read_any(uf)
-                parts = chunk_text(raw, max_chars=chunk_size, overlap=chunk_ovlp)
-                for i, p in enumerate(parts):
-                    new_texts.append(p)
-                    new_meta.append({"file": uf.name, "chunk_id": i})
-            except Exception as e:
-                st.warning(f"Falha ao processar {uf.name}: {e}")
-        if new_texts:
-            M_new = encode_texts(new_texts, batch_size=64)
-            if st.session_state.upld_emb is None:
-                st.session_state.upld_emb = M_new
-            else:
-                st.session_state.upld_emb = np.vstack([st.session_state.upld_emb, M_new])
-            st.session_state.upld_texts.extend(new_texts)
-            st.session_state.upld_meta.extend(new_meta)
-            st.success(f"Upload indexado: {len(new_texts)} chunks.")
+        update_upload_embeddings(uploaded_files)
 
-# ---------- Funções de busca ----------
+# ========== Recuperação padrão ==========
 def search_all(query: str) -> list[str]:
     """Embute a query e busca nos 4 conjuntos (Sphera/GoSee/Docs/Upload). Retorna blocos formatados."""
     qv = encode_query(query)
@@ -454,85 +636,57 @@ def get_upload_raw(max_chars: int) -> str:
         total += len(t)
     return "\n\n".join(buf).strip()
 
-def build_upload_vector() -> np.ndarray | None:
-    """Retorna um vetor médio dos chunks do upload (L2), para comparar com WS/Prec/CP."""
-    if st.session_state.upld_emb is None or st.session_state.upld_emb.size == 0:
-        return None
-    M = st.session_state.upld_emb
-    v = M.mean(axis=0)
-    v = v.astype(np.float32)
-    v /= (np.linalg.norm(v) + 1e-9)
-    return v
-
-def list_matches(name: str, E: np.ndarray, labels: list[str] | None, ids: list[str] | None, qvec: np.ndarray, tau: float, topn: int):
-    """Retorna lista de (rank, id_str, label, score) filtrando por tau e topn."""
-    if E is None or qvec is None:
+# ========== Match Upload → Dicionários (WS/Prec/CP) ==========
+def match_upload_to_dict(E_dict: np.ndarray, labels_pt: list[str], labels_en: list[str], threshold: float, topk: int):
+    """
+    Retorna lista de dicts: {idx, sim, label_pt, label_en}
+    Calcula sim máxima de cada termo do dicionário vs. TODOS os chunks do upload.
+    Filtra por limiar e ordena por similaridade desc.
+    """
+    if E_dict is None or st.session_state.upld_emb is None:
         return []
-    sims = (E @ qvec).astype(float)
-    order = np.argsort(-sims)
-    out = []
-    taken = 0
-    for pos in order:
-        sc = float(sims[pos])
-        if sc < tau:
-            continue
-        lbl = labels[pos] if (labels and pos < len(labels)) else f"{name}_{pos}"
-        rid = ids[pos] if (ids and pos < len(ids)) else str(pos)
-        out.append((len(out)+1, rid, lbl, sc))
-        taken += 1
-        if taken >= topn:
-            break
-    return out
+    sims_max = batched_cosine_max(E_dict, st.session_state.upld_emb)  # (n_dict,)
+    idxs = np.where(sims_max >= threshold)[0]
+    items = []
+    lang_pt = st.session_state.upld_lang_pt
+    for i in idxs:
+        lp = labels_pt[i] if labels_pt and i < len(labels_pt) else "—"
+        le = labels_en[i] if labels_en and i < len(labels_en) else lp
+        items.append({
+            "idx": int(i),
+            "sim": float(sims_max[i]),
+            "label_pt": lp,
+            "label_en": le,
+            "label": lp if lang_pt else le
+        })
+    items.sort(key=lambda x: -x["sim"])
+    return items[:topk]
 
-# ---------- Contagem local para queries simples (ex.: Sphera > ano) ----------
-def try_count_sphera_after_year(prompt_text: str) -> str | None:
-    """
-    Detecta padrões do tipo: 'quantos eventos ... sphera ... após/depois/maior que 2023/2024 ...'
-    Faz a contagem direto em df_sph, tentando colunas de data comuns.
-    """
-    if df_sph is None or df_sph.empty:
-        return None
-    txt = prompt_text.lower()
-    if "sphera" not in txt and "event" not in txt and "evento" not in txt:
-        return None
-    # regex para ano
-    m = re.search(r"(?:apó|depois|maior que|superior a)\s*(?:o\s*ano\s*de\s*)?(\d{4})", txt)
-    if not m:
-        # tenta "superior a 2023"
-        m = re.search(r"(?:>\s*|>=\s*)(\d{4})", txt)
-    if not m:
-        return None
-    year = int(m.group(1))
-    # colunas possíveis de data
-    date_cols = [c for c in df_sph.columns if c.lower() in (
-        "event date", "event_date", "date", "ocorrencia", "ocorrência", "data", "eventdate"
-    )]
-    if not date_cols:
-        # tenta inferir por dtype datetime
-        date_cols = [c for c in df_sph.columns if np.issubdtype(df_sph[c].dtype, np.datetime64)]
-    if not date_cols:
-        # tenta parse manual de algumas colunas texto
-        for c in df_sph.columns:
-            try:
-                pd.to_datetime(df_sph[c], errors="raise")
-                date_cols = [c]; break
-            except Exception:
-                continue
-    if not date_cols:
-        return None
-    col = date_cols[0]
-    try:
-        dts = pd.to_datetime(df_sph[col], errors="coerce")
-        cnt = int((dts.dt.year > year).sum())
-        return f"[LOCAL] Contagem Sphera em '{col}' com ano > {year}: **{cnt}** evento(s)."
-    except Exception:
-        return None
+def build_taxonomy_blocks():
+    """Monta blocos [WS_MATCH], [PREC_MATCH], [CP_MATCH] a partir do upload + dicionários."""
+    blocks = []
+    ws_items   = match_upload_to_dict(E_ws,   ws_labels_pt,   ws_labels_en,   ws_threshold,   max_per_dict)
+    prec_items = match_upload_to_dict(E_prec, prec_labels_pt, prec_labels_en, prec_threshold, max_per_dict)
+    cp_items   = match_upload_to_dict(E_cp,   cp_labels_pt,   cp_labels_en,   cp_threshold,   max_per_dict)
 
-# ---------- UI ----------
+    def fmt(group_name, items, tag):
+        if not items:
+            return f"[{tag}] (nenhum ≥ limiar)"
+        lines = [f"[{tag}] {group_name} (top {len(items)} — limiar={ws_threshold if tag=='WS_MATCH' else prec_threshold if tag=='PREC_MATCH' else cp_threshold:.2f})"]
+        for r in items:
+            lines.append(f"- {tag.split('_')[0]}/{r['idx']} | sim={r['sim']:.3f} | {r['label']}")
+        return "\n".join(lines)
+
+    blocks.append(fmt("Weak Signals", ws_items, "WS_MATCH"))
+    blocks.append(fmt("Precursores (HTO incluído no rótulo, se houver)", prec_items, "PREC_MATCH"))
+    blocks.append(fmt("Taxonomia CP (bag of terms)", cp_items, "CP_MATCH"))
+    return "\n\n".join(blocks), ws_items, prec_items, cp_items
+
+# ========== UI ==========
 st.title("ESO • CHAT — HIST + UPLD (Embeddings preferencial)")
-st.caption("RAG local 100% embeddings (Sphera / GoSee / Docs / Upload) + dicionários (WS/Precursores/CP).")
+st.caption("RAG local 100% embeddings (Sphera / GoSee / Docs / Upload) + Dicionários (WS/Precursores/CP).")
 
-# Mostrar histórico
+# Histórico
 for m in st.session_state.chat:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
@@ -544,117 +698,56 @@ if prompt:
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 0) Handler local para contagens simples (ex.: Sphera > ano)
-    local_note = try_count_sphera_after_year(prompt)
-
-    # 1) Recuperação geral
+    # Recuperação clássica
     blocks = search_all(prompt)
 
-    # 2) Recorte 'cru' do upload (máx N chars)
+    # Opcional: injeta recorte do upload
     up_raw = get_upload_raw(upload_raw_max)
     if up_raw:
         blocks = [f"[UPLOAD_RAW]\n{up_raw}"] + blocks
 
-    # 3) WS/Precursores/CP vs Upload (semântica)
-    q_upload = build_upload_vector()
-    if q_upload is not None:
-        # aviso de idioma
-        pt_score = lang_guess_pt(up_raw)
-        lang_msg = ""
-        if force_lang == "PT" or (force_lang == "auto" and pt_score >= 0.5):
-            # se os textos do dicionário aparentarem estar em EN, avisar
-            def guess_is_en(texts):
-                if not texts: return False
-                sample = " ".join(texts[:10]).lower()
-                en_hits = sum(sample.count(w) for w in ["the ", "and ", "of ", "with ", "safety "])
-                pt_hits = sum(sample.count(w) for w in [" de ", " que ", " com ", " segurança "])
-                return en_hits > pt_hits
-            if guess_is_en(WS_TEXTS):
-                lang_msg += "⚠️ Upload parece PT, mas WS (npz) aparenta EN. "
-            if guess_is_en(PREC_TEXTS):
-                lang_msg += "⚠️ Precursores aparenta EN. "
-            if guess_is_en(CP_TEXTS):
-                lang_msg += "⚠️ CP aparenta EN. "
-        elif force_lang == "EN" or (force_lang == "auto" and pt_score < 0.5):
-            # se os textos do dicionário aparentarem PT, avisar
-            def guess_is_pt(texts):
-                if not texts: return False
-                sample = " ".join(texts[:10]).lower()
-                return any(t in sample for t in [" de ", " que ", " com ", " segurança ", " guindaste "])
-            if guess_is_pt(WS_TEXTS):
-                lang_msg += "⚠️ Upload parece EN, mas WS (npz) aparenta PT. "
-            if guess_is_pt(PREC_TEXTS):
-                lang_msg += "⚠️ Precursores aparenta PT. "
-            if guess_is_pt(CP_TEXTS):
-                lang_msg += "⚠️ CP aparenta PT. "
-        if lang_msg:
-            blocks.append(f"[LANG] {lang_msg.strip()}")
+    # Taxonomias (WS/Prec/CP) a partir do upload
+    taxo_block, ws_found, prec_found, cp_found = build_taxonomy_blocks()
 
-        # WS
-        ws_hits = list_matches("WS", E_ws, WS_TEXTS, WS_IDS, q_upload, ws_tau, max_list)
-        if ws_hits:
-            lines = ["WS (do dicionário embutido):"]
-            for rnk, rid, lbl, sc in ws_hits:
-                lines.append(f"{rnk}. [WS/{rid}] (sim={sc:.3f}) — {lbl}")
-            blocks.append("\n".join(lines))
-        else:
-            blocks.append("WS: nenhum termo do dicionário atingiu o limiar.")
-
-        # Precursores
-        prec_hits = list_matches("PRE", E_prec, PREC_TEXTS, PREC_IDS, q_upload, prec_tau, max_list)
-        if prec_hits:
-            lines = ["Precursores (dicionário embutido):"]
-            for rnk, rid, lbl, sc in prec_hits:
-                lines.append(f"{rnk}. [Prec/{rid}] (sim={sc:.3f}) — {lbl}")
-            blocks.append("\n".join(lines))
-        else:
-            blocks.append("Precursores: nenhum termo do dicionário atingiu o limiar.")
-
-        # CP
-        cp_hits = list_matches("CP", E_cp, CP_TEXTS, CP_IDS, q_upload, cp_tau, max_list)
-        if cp_hits:
-            lines = ["Taxonomia CP (bag-of-terms embutido):"]
-            for rnk, rid, lbl, sc in cp_hits:
-                lines.append(f"{rnk}. [CP/{rid}] (sim={sc:.3f}) — {lbl}")
-            blocks.append("\n".join(lines))
-        else:
-            blocks.append("CP: nenhum item do dicionário atingiu o limiar.")
-    else:
-        blocks.append("⚠️ Sem embeddings de upload (faça upload de um arquivo para comparar com WS/Prec/CP).")
-
-    # 4) Monta mensagens p/ LLM
-    msgs = [{"role": "system", "content": st.session_state.system_prompt}]
-
+    # Monta mensagens para o LLM
+    messages = [{"role": "system", "content": st.session_state.system_prompt}]
     if use_catalog and os.path.exists(DATASETS_CONTEXT_FILE):
         try:
             with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
-                msgs.append({"role": "system", "content": f.read()})
+                messages.append({"role": "system", "content": f.read()})
         except Exception:
             pass
 
+    # Blocos de contexto (RAG clássico)
     if blocks:
         ctx = "\n\n".join(blocks)
-        if local_note:
-            ctx = local_note + "\n\n" + ctx
-        msgs.append({"role": "user", "content": f"CONTEXTOS (HIST+UPLD+DICT):\n{ctx}"})
-        msgs.append({"role": "user", "content": f"PERGUNTA: {prompt}"})
-    else:
-        msgs.append({"role": "user", "content": prompt})
+        messages.append({"role": "user", "content": f"CONTEXTOS (HIST + UPLOAD):\n{ctx}"})
 
-    # 5) Resposta do modelo
+    # Bloco Taxonomias (somente os itens achados nos dicionários)
+    messages.append({"role": "user", "content": taxo_block})
+
+    # Pergunta do usuário
+    messages.append({"role": "user", "content": f"PERGUNTA: {prompt}\n\n"
+                                                f"IMPORTANTE: Ao citar Weak Signals, Precursores e Fatores CP, "
+                                                f"USE SOMENTE os itens listados nos blocos [WS_MATCH], [PREC_MATCH] e [CP_MATCH]. "
+                                                f"Não invente termos fora desses blocos."})
+
+    # Chamada ao modelo
     with st.chat_message("assistant"):
         with st.spinner("Consultando o modelo…"):
             try:
-                resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
+                resp = ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False)
                 content = resp.get("message", {}).get("content", "").strip() or json.dumps(resp)[:1200]
             except Exception as e:
                 content = f"Falha ao consultar o modelo: {e}"
             st.markdown(content)
     st.session_state.chat.append({"role": "assistant", "content": content})
 
-# ---------- Painel / Diagnóstico ----------
+# ========== Painel / Diagnóstico ==========
+debug = st.sidebar.checkbox("Mostrar painel de diagnóstico", False)
+
 if debug:
-    with st.expander("📦 Status dos índices", expanded=True):
+    with st.expander("📦 Status dos índices (bases)", expanded=False):
         def _ok(x): return "✅" if x else "—"
         st.write("Sphera embeddings:", _ok(E_sph is not None and df_sph is not None))
         if E_sph is not None and df_sph is not None:
@@ -667,35 +760,31 @@ if debug:
             st.write(f" • shape: {E_his.shape} | chunks: {len(rows_his)}")
         st.write("Uploads indexados:", len(st.session_state.upld_texts))
         st.write("Encoder ativo    :", ST_MODEL_NAME)
+        st.write("Idioma upload    :", "PT" if st.session_state.upld_lang_pt else "EN")
 
-        st.write("---")
-        def _bundle_info(name, B):
-            E = B["E"]; ids = B["ids"]; texts = B["texts"]
-            st.write(f"{name}: E={'None' if E is None else E.shape}, ids={0 if ids is None else len(ids)}, texts={0 if texts is None else len(texts)}")
-            if texts:
-                st.caption(f"Exemplo: {texts[0][:120]}")
-        _bundle_info("WS", B_ws)
-        _bundle_info("Precursores", B_prec)
-        _bundle_info("CP", B_cp)
+    with st.expander("🔎 WS/Precursores/CP — embeddings & labels", expanded=True):
+        def show_group(name, E, ids_npz, texts_npz, labels_pt, labels_en, notes):
+            nE = E.shape[0] if E is not None else 0
+            n_ids = len(ids_npz) if ids_npz is not None else 0
+            n_txt = len(texts_npz) if texts_npz is not None else 0
+            n_pt  = len(labels_pt) if labels_pt is not None else 0
+            n_en  = len(labels_en) if labels_en is not None else 0
+            st.markdown(f"**{name}**: E={nE}, ids={n_ids}, npz_texts={n_txt}, PT={n_pt}, EN={n_en}")
+            if notes:
+                for nt in notes:
+                    st.caption(f"ℹ️ {nt}")
+            # exemplo
+            if nE > 0:
+                try:
+                    ex = labels_pt[0] if labels_pt else (texts_npz[0] if texts_npz else "—")
+                    st.write("Exemplo:", ex)
+                except Exception:
+                    pass
 
-    with st.expander("🔎 Versões dos pacotes", expanded=False):
-        import importlib, sys
-        pkgs = [
-            ("torch", "torch"),
-            ("transformers", "transformers"),
-            ("sentence-transformers", "sentence_transformers"),
-            ("pandas", "pandas"),
-            ("numpy", "numpy"),
-            ("pyarrow", "pyarrow"),
-            ("pypdf", "pypdf"),
-            ("python-docx", "docx"),
-            ("scikit-learn", "sklearn"),
-        ]
-        st.write("Python:", sys.version)
-        for disp, mod in pkgs:
-            try:
-                m = importlib.import_module(mod)
-                ver = getattr(m, "__version__", "sem __version__")
-                st.write(f"{disp}: {ver}")
-            except Exception as e:
-                st.write(f"{disp}: não instalado ({e})")
+        show_group("WS",   E_ws,   ws_ids_npz,   ws_texts_npz,   ws_labels_pt,   ws_labels_en,   ws_notes)
+        show_group("Prec", E_prec, prec_ids_npz, prec_texts_npz, prec_labels_pt, prec_labels_en, prec_notes)
+        show_group("CP",   E_cp,   cp_ids_npz,   cp_texts_npz,   cp_labels_pt,   cp_labels_en,   cp_notes)
+
+    with st.expander("🧪 Match (upload → dicionários)", expanded=False):
+        tb, ws_found, prec_found, cp_found = build_taxonomy_blocks()
+        st.text(tb)
