@@ -519,4 +519,4 @@ def _upload_centroid() -> np.ndarray | None:
         return None
     c = E.mean(axis=0)
     c = c.astype(np.float32)
-    c /= (np.linalg
+    c /= (np.linalg)
