@@ -14,6 +14,41 @@ import requests
 import numpy as np
 import pandas as pd
 import streamlit as st
+from pathlib import Path
+
+# ---------- Contexto (system prompt) ----------
+CONTEXT_MD_REL_PATH = Path(__file__).parent / "docs" / "contexto_eso_chat.md"
+DATASETS_CONTEXT_FILE = "datasets_context.md"  # você já tinha isso (mantido)
+
+@st.cache_data(show_spinner=False)
+def load_file_text(p: Path) -> str:
+    try:
+        return p.read_text(encoding="utf-8")
+    except Exception as e:
+        return f"[AVISO] Não consegui ler {p}: {e}\n(Prosseguindo sem esse contexto.)"
+
+def build_system_prompt() -> str:
+    # Preâmbulo curto + contexto operacional
+    preambulo = (
+        "Você é o ESO-CHAT (segurança operacional).\n"
+        "Siga estritamente as regras e convenções do contexto abaixo.\n"
+        "Responda em PT-BR por padrão.\n"
+        "Quando usar buscas semânticas, sempre mostre IDs/Fonte e similaridade.\n"
+        "Não invente dados fora dos contextos fornecidos.\n"
+    )
+    ctx_md = load_file_text(CONTEXT_MD_REL_PATH)
+    # Nota: o datasets_context.md (se existir) será adicionado mais abaixo como outra mensagem de sistema.
+    return preambulo + "\n\n=== CONTEXTO ESO-CHAT (.md) ===\n" + ctx_md
+
+# Inicializa uma vez por sessão
+if "system_prompt" not in st.session_state:
+    st.session_state.system_prompt = build_system_prompt()
+
+# (Opcional) botão para recarregar o .md sem reiniciar o app
+if st.sidebar.button("Recarregar contexto (.md)"):
+    st.session_state.system_prompt = build_system_prompt()
+    st.sidebar.success("Contexto recarregado.")
+
 
 # ---------- Config básica ----------
 st.set_page_config(page_title="ESO • CHAT (Embeddings)", page_icon="💬", layout="wide")
@@ -389,14 +424,10 @@ if prompt:
         blocks = [f"[UPLOAD_RAW]\n{up_raw}"] + blocks
 
     # Monta mensagens p/ LLM
-    SYSTEM = (
-        "Você é um assistente de segurança operacional. "
-        "Use os CONTEXTOS abaixo como evidências. "
-        "Quando citar fatos específicos, inclua aspas de trechos dos contextos e a etiqueta "
-        "[Fonte/ID] do bloco correspondente. Não invente dados fora dos contextos."
-    )
-    msgs = [{"role": "system", "content": SYSTEM}]
+    # 1) Mensagem de SISTEMA principal: vem do .md
+    msgs = [{"role": "system", "content": st.session_state.system_prompt}]
 
+    # 2) (Opcional) acrescenta o datasets_context.md como outra mensagem de sistema
     if use_catalog and os.path.exists(DATASETS_CONTEXT_FILE):
         try:
             with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
@@ -404,6 +435,7 @@ if prompt:
         except Exception:
             pass
 
+    # 3) Injeta os CONTEXTOS recuperados (RAG) como user-message
     if blocks:
         ctx = "\n\n".join(blocks)
         msgs.append({"role": "user", "content": f"CONTEXTOS (HIST + UPLOAD):\n{ctx}"})
@@ -411,6 +443,7 @@ if prompt:
     else:
         msgs.append({"role": "user", "content": prompt})
 
+    # 4) Chamada ao modelo
     with st.chat_message("assistant"):
         with st.spinner("Consultando o modelo…"):
             try:
@@ -421,7 +454,50 @@ if prompt:
             st.markdown(content)
     st.session_state.chat.append({"role": "assistant", "content": content})
 
+
 # ---------- Painel / Diagnóstico ----------
+
+# na sidebar:
+debug = st.sidebar.checkbox("Mostrar painel de diagnóstico", False)
+
+if debug:
+    with st.expander("📦 Status dos índices", expanded=False):
+        def _ok(x): return "✅" if x else "—"
+        st.write("Sphera embeddings:", _ok(E_sph is not None and df_sph is not None))
+        if E_sph is not None and df_sph is not None:
+            st.write(f" • shape: {E_sph.shape} | linhas df: {len(df_sph)}")
+        st.write("GoSee embeddings :", _ok(E_gos is not None and df_gos is not None))
+        if E_gos is not None and df_gos is not None:
+            st.write(f" • shape: {E_gos.shape} | linhas df: {len(df_gos)}")
+        st.write("Docs embeddings  :", _ok(E_his is not None and len(rows_his) > 0))
+        if E_his is not None and rows_his:
+            st.write(f" • shape: {E_his.shape} | chunks: {len(rows_his)}")
+        st.write("Uploads indexados:", len(st.session_state.upld_texts))
+        st.write("Encoder ativo    :", ST_MODEL_NAME)
+
+    with st.expander("🔎 Versões dos pacotes", expanded=False):
+        import importlib, sys
+        pkgs = [
+            ("torch", "torch"),
+            ("transformers", "transformers"),
+            ("sentence-transformers", "sentence_transformers"),
+            ("pandas", "pandas"),
+            ("numpy", "numpy"),
+            ("pyarrow", "pyarrow"),
+            ("pypdf", "pypdf"),
+            ("python-docx", "docx"),
+            ("scikit-learn", "sklearn"),
+        ]
+        st.write("Python:", sys.version)
+        for disp, mod in pkgs:
+            try:
+                m = importlib.import_module(mod)
+                ver = getattr(m, "__version__", "sem __version__")
+                st.write(f"{disp}: {ver}")
+            except Exception as e:
+                st.write(f"{disp}: não instalado ({e})")
+
+
 with st.expander("📦 Status dos índices", expanded=False):
     def _ok(x): return "✅" if x else "—"
     st.write("Sphera embeddings:", _ok(E_sph is not None and df_sph is not None))
@@ -436,24 +512,24 @@ with st.expander("📦 Status dos índices", expanded=False):
     st.write("Uploads indexados:", len(st.session_state.upld_texts))
     st.write("Encoder ativo    :", ST_MODEL_NAME)
 
-with st.expander("🔎 Versões dos pacotes"):
-    import importlib, sys
-    pkgs = [
-        ("torch", "torch"),
-        ("transformers", "transformers"),
-        ("sentence-transformers", "sentence_transformers"),
-        ("pandas", "pandas"),
-        ("numpy", "numpy"),
-        ("pyarrow", "pyarrow"),
-        ("pypdf", "pypdf"),
-        ("python-docx", "docx"),
-        ("scikit-learn", "sklearn"),
-    ]
-    st.write("Python:", sys.version)
-    for disp, mod in pkgs:
-        try:
-            m = importlib.import_module(mod)
-            ver = getattr(m, "__version__", "sem __version__")
-            st.write(f"{disp}: {ver}")
-        except Exception as e:
-            st.write(f"{disp}: não instalado ({e})")
+    with st.expander("🔎 Versões dos pacotes"):
+        import importlib, sys
+        pkgs = [
+            ("torch", "torch"),
+            ("transformers", "transformers"),
+            ("sentence-transformers", "sentence_transformers"),
+            ("pandas", "pandas"),
+            ("numpy", "numpy"),
+            ("pyarrow", "pyarrow"),
+            ("pypdf", "pypdf"),
+            ("python-docx", "docx"),
+            ("scikit-learn", "sklearn"),
+        ]
+        st.write("Python:", sys.version)
+        for disp, mod in pkgs:
+            try:
+                m = importlib.import_module(mod)
+                ver = getattr(m, "__version__", "sem __version__")
+                st.write(f"{disp}: {ver}")
+            except Exception as e:
+                st.write(f"{disp}: não instalado ({e})")
