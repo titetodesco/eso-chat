@@ -210,6 +210,7 @@ return [
   for i in hits
 ]
 
+
 10) Parâmetros recomendados (podem ser tunados)
 
 chunk_size: 600–900 tokens; chunk_overlap: 80–120.
