@@ -58,6 +58,9 @@ planilha de origem: data/xlsx/DicionarioWeakSignals.xlsx
 “Se não houver match ≥ limiar, diga que não encontrou. Não invente.”
 
 “Não derive WS/Prec/CP exclusivamente do texto do upload. O upload serve apenas para consulta semântica contra os dicionários.”
+Na montagem da resposta (no próprio app), passe para o LLM apenas os hits vindos dos dicionários.
+Ex.: quando o usuário pede “identifique WS”, você primeiro roda a busca semântica contra ws_embeddings.npz e monta um bloco com somente [WS/<id>] (sim=...) “termo” – citação do upload.
+Se a lista vier vazia, você já envia a conclusão “0 encontrados” dentro do contexto.
 
 Precursores (HTO):
 
