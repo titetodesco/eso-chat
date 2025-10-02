@@ -53,6 +53,12 @@ planilha de origem: data/xlsx/DicionarioWeakSignals.xlsx
 
 índices: data/analytics/ws_embeddings.npz, data/analytics/ws_vectors.npz
 
+“Para WS/Precursores/CP só pode citar itens que venham dos embeddings oficiais ([WS/...], [Prec/...], [CP/...]).”
+
+“Se não houver match ≥ limiar, diga que não encontrou. Não invente.”
+
+“Não derive WS/Prec/CP exclusivamente do texto do upload. O upload serve apenas para consulta semântica contra os dicionários.”
+
 Precursores (HTO):
 
 planilha de origem: data/xlsx/precursores_expandido.xlsx
