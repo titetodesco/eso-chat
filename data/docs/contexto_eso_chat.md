@@ -129,9 +129,12 @@ Weak Signals (WS)
 ID | WS | Similaridade | Trecho do upload
 — | — | — | —
 
-Precursores (H-T-O)
-ID | Precursor | H/T/O | Similaridade | Trecho do upload
+Precursores (H-T-O) 
+ID |  H/T/O | Precursor |Similaridade | Trecho do upload
 — | — | — | — | —
+
+No retorno, traga sempre a coluna Precursor_PT ou Precursor_EN dependendo do idioma e não a categoria HTO ao invés do Precursor.
+
 
 Taxonomia CP
 ID | Dimensão | Fator/Subfator | Similaridade | Trecho do upload
