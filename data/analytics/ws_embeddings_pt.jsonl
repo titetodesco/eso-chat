@@ -1,0 +1,90 @@
+{"id": 0, "text": "Ruído anormal do equipamento não documentado", "lang": "pt"}
+{"id": 1, "text": "temperatura anormal do fluido", "lang": "pt"}
+{"id": 2, "text": "alarme desativado por hábito", "lang": "pt"}
+{"id": 3, "text": "alarmes frequentemente silenciados", "lang": "pt"}
+{"id": 4, "text": "Indicador de status ambíguo no painel", "lang": "pt"}
+{"id": 5, "text": "listas de verificação ignoradas", "lang": "pt"}
+{"id": 6, "text": "instruções operacionais conflitantes", "lang": "pt"}
+{"id": 7, "text": "Acesso ao painel de controle obstruído", "lang": "pt"}
+{"id": 8, "text": "A tripulação desconhece as mudanças recentes", "lang": "pt"}
+{"id": 9, "text": "Desempenho degradado do sensor", "lang": "pt"}
+{"id": 10, "text": "atraso no reconhecimento de alarmes", "lang": "pt"}
+{"id": 11, "text": "desvio não registrado", "lang": "pt"}
+{"id": 12, "text": "desvio nas leituras do instrumento", "lang": "pt"}
+{"id": 13, "text": "sinais de corrosão precoce não monitorados", "lang": "pt"}
+{"id": 14, "text": "sinais de desgaste precoce ignorados", "lang": "pt"}
+{"id": 15, "text": "equipamento de emergência bloqueado", "lang": "pt"}
+{"id": 16, "text": "equipamento não totalmente isolado", "lang": "pt"}
+{"id": 17, "text": "licença expirada ainda em uso", "lang": "pt"}
+{"id": 18, "text": "fadiga ignorada pela supervisão", "lang": "pt"}
+{"id": 19, "text": "fadiga relatada informalmente", "lang": "pt"}
+{"id": 20, "text": "esqueci as tarefas de manutenção", "lang": "pt"}
+{"id": 21, "text": "Desvios de intertravamento frequentes", "lang": "pt"}
+{"id": 22, "text": "detector de gás offline durante a atividade", "lang": "pt"}
+{"id": 23, "text": "cheiro de gás descartado como residual", "lang": "pt"}
+{"id": 24, "text": "notas manuscritas substituindo logs", "lang": "pt"}
+{"id": 25, "text": "registros manuscritos substituindo logs", "lang": "pt"}
+{"id": 26, "text": "etiqueta de perigo ilegível", "lang": "pt"}
+{"id": 27, "text": "superfícies quentes deixadas sem marcas", "lang": "pt"}
+{"id": 28, "text": "trabalho a quente sem monitoramento adequado", "lang": "pt"}
+{"id": 29, "text": "limpeza inadequada em áreas críticas", "lang": "pt"}
+{"id": 30, "text": "Ação improvisada durante a tarefa rotineira", "lang": "pt"}
+{"id": 31, "text": "Análise incompleta da segurança do trabalho", "lang": "pt"}
+{"id": 32, "text": "bloqueio/sinalização incompletos", "lang": "pt"}
+{"id": 33, "text": "registros de treinamento incompletos", "lang": "pt"}
+{"id": 34, "text": "ferramenta incorreta para tarefa aceita", "lang": "pt"}
+{"id": 35, "text": "comunicação ineficaz durante a entrega", "lang": "pt"}
+{"id": 36, "text": "Substituição de intertravamento aceita", "lang": "pt"}
+{"id": 37, "text": "manutenção adiada repetidamente", "lang": "pt"}
+{"id": 38, "text": "Ação manual no sistema automatizado", "lang": "pt"}
+{"id": 39, "text": "Substituição manual normalizada", "lang": "pt"}
+{"id": 40, "text": "Pequeno derramamento não relatado", "lang": "pt"}
+{"id": 41, "text": "Vários alarmes acionados", "lang": "pt"}
+{"id": 42, "text": "quase acidente subnotificado", "lang": "pt"}
+{"id": 43, "text": "exposição ao ruído acima da norma não gravada", "lang": "pt"}
+{"id": 44, "text": "limites operacionais repetidamente desafiados", "lang": "pt"}
+{"id": 45, "text": "Operador não certificado para a tarefa", "lang": "pt"}
+{"id": 46, "text": "vibração fora do padrão", "lang": "pt"}
+{"id": 47, "text": "uso parcial de EPI", "lang": "pt"}
+{"id": 48, "text": "Manutenção pendente para item crítico", "lang": "pt"}
+{"id": 49, "text": "Iluminação ruim perto do equipamento", "lang": "pt"}
+{"id": 50, "text": "Entrega mal documentada", "lang": "pt"}
+{"id": 51, "text": "Uso indevido de EPI não abordado", "lang": "pt"}
+{"id": 52, "text": "queda de pressão na linha crítica", "lang": "pt"}
+{"id": 53, "text": "Flutuação do manômetro descartada", "lang": "pt"}
+{"id": 54, "text": "Variável de conformidade processual", "lang": "pt"}
+{"id": 55, "text": "procedimento não totalmente seguido", "lang": "pt"}
+{"id": 56, "text": "andaimes provisórios reutilizados", "lang": "pt"}
+{"id": 57, "text": "alarme recorrente reconhecido sem investigação", "lang": "pt"}
+{"id": 58, "text": "Pequenas falhas recorrentes", "lang": "pt"}
+{"id": 59, "text": "Reinicialização manual recorrente da válvula de segurança", "lang": "pt"}
+{"id": 60, "text": "Desvio de rotina aceito", "lang": "pt"}
+{"id": 61, "text": "inspeções de rotina atrasadas", "lang": "pt"}
+{"id": 62, "text": "Alerta de segurança não divulgado", "lang": "pt"}
+{"id": 63, "text": "verificações de segurança realizadas superficialmente", "lang": "pt"}
+{"id": 64, "text": "complacência da cultura de segurança", "lang": "pt"}
+{"id": 65, "text": "sinais de segurança ausentes ou desbotados", "lang": "pt"}
+{"id": 66, "text": "andaimes improvisados ou reutilizados", "lang": "pt"}
+{"id": 67, "text": "desvio do sensor despercebido", "lang": "pt"}
+{"id": 68, "text": "Desligamento abortado sem justificativa", "lang": "pt"}
+{"id": 69, "text": "pequeno vazamento normalizado", "lang": "pt"}
+{"id": 70, "text": "Peças de reposição reutilizadas além da vida útil", "lang": "pt"}
+{"id": 71, "text": "limpeza abaixo do padrão em áreas críticas", "lang": "pt"}
+{"id": 72, "text": "Fadiga de supervisão não resolvida", "lang": "pt"}
+{"id": 73, "text": "reinicialização do sistema repetidamente", "lang": "pt"}
+{"id": 74, "text": "desvio temporário no local", "lang": "pt"}
+{"id": 75, "text": "correção temporária não seguida", "lang": "pt"}
+{"id": 76, "text": "reparo temporário se tornando permanente", "lang": "pt"}
+{"id": 77, "text": "ferramenta deixada sem supervisão", "lang": "pt"}
+{"id": 78, "text": "condição transitória desconsiderada", "lang": "pt"}
+{"id": 79, "text": "Acesso não autorizado à zona perigosa", "lang": "pt"}
+{"id": 80, "text": "modificação não autorizada de configurações", "lang": "pt"}
+{"id": 81, "text": "Ruído inesperado do equipamento", "lang": "pt"}
+{"id": 82, "text": "comportamento inesperado do sistema observado", "lang": "pt"}
+{"id": 83, "text": "odor incomum na área de processo", "lang": "pt"}
+{"id": 84, "text": "vibração incomum não registrada", "lang": "pt"}
+{"id": 85, "text": "Instruções verbais que substituem os procedimentos", "lang": "pt"}
+{"id": 86, "text": "indicação visual ignorada", "lang": "pt"}
+{"id": 87, "text": "inspeção visual ignorada", "lang": "pt"}
+{"id": 88, "text": "fita de aviso ausente", "lang": "pt"}
+{"id": 89, "text": "sinais de desgaste não relatados", "lang": "pt"}

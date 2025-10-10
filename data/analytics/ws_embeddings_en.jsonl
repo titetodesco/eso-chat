@@ -1,0 +1,90 @@
+{"id": 0, "text": "abnormal equipment noise undocumented", "lang": "en"}
+{"id": 1, "text": "abnormal fluid temperature", "lang": "en"}
+{"id": 2, "text": "alarm deactivated by habit", "lang": "en"}
+{"id": 3, "text": "alarms frequently muted", "lang": "en"}
+{"id": 4, "text": "ambiguous status indicator on panel", "lang": "en"}
+{"id": 5, "text": "checklists ignored", "lang": "en"}
+{"id": 6, "text": "conflicting operational instructions", "lang": "en"}
+{"id": 7, "text": "control panel access obstructed", "lang": "en"}
+{"id": 8, "text": "crew unaware of recent changes", "lang": "en"}
+{"id": 9, "text": "degraded sensor performance", "lang": "en"}
+{"id": 10, "text": "delay in acknowledging alarms", "lang": "en"}
+{"id": 11, "text": "deviation not logged", "lang": "en"}
+{"id": 12, "text": "drift in instrument readings", "lang": "en"}
+{"id": 13, "text": "early corrosion signs unmonitored", "lang": "en"}
+{"id": 14, "text": "early wear signs ignored", "lang": "en"}
+{"id": 15, "text": "emergency equipment blocked", "lang": "en"}
+{"id": 16, "text": "equipment not fully isolated", "lang": "en"}
+{"id": 17, "text": "expired permit still in use", "lang": "en"}
+{"id": 18, "text": "fatigue ignored by supervision", "lang": "en"}
+{"id": 19, "text": "fatigue reported informally", "lang": "en"}
+{"id": 20, "text": "forgot maintenance tasks", "lang": "en"}
+{"id": 21, "text": "frequent interlock bypasses", "lang": "en"}
+{"id": 22, "text": "gas detector offline during activity", "lang": "en"}
+{"id": 23, "text": "gas smell dismissed as residual", "lang": "en"}
+{"id": 24, "text": "hand-written notes replacing logs", "lang": "en"}
+{"id": 25, "text": "handwritten records replacing logs", "lang": "en"}
+{"id": 26, "text": "hazard label unreadable", "lang": "en"}
+{"id": 27, "text": "hot surfaces left unmarked", "lang": "en"}
+{"id": 28, "text": "hot work without proper monitoring", "lang": "en"}
+{"id": 29, "text": "improper housekeeping in critical areas", "lang": "en"}
+{"id": 30, "text": "improvised action during routine task", "lang": "en"}
+{"id": 31, "text": "incomplete job safety analysis", "lang": "en"}
+{"id": 32, "text": "incomplete lockout/tagout", "lang": "en"}
+{"id": 33, "text": "incomplete training records", "lang": "en"}
+{"id": 34, "text": "incorrect tool for task accepted", "lang": "en"}
+{"id": 35, "text": "ineffective communication during handover", "lang": "en"}
+{"id": 36, "text": "interlock override accepted", "lang": "en"}
+{"id": 37, "text": "maintenance postponed repeatedly", "lang": "en"}
+{"id": 38, "text": "manual action on automated system", "lang": "en"}
+{"id": 39, "text": "manual override normalized", "lang": "en"}
+{"id": 40, "text": "minor spill unreported", "lang": "en"}
+{"id": 41, "text": "multiple alarms triggered", "lang": "en"}
+{"id": 42, "text": "near miss underreported", "lang": "en"}
+{"id": 43, "text": "noise exposure above norm not recorded", "lang": "en"}
+{"id": 44, "text": "operational limits repeatedly challenged", "lang": "en"}
+{"id": 45, "text": "operator not certified for task", "lang": "en"}
+{"id": 46, "text": "out-of-pattern vibration", "lang": "en"}
+{"id": 47, "text": "partial PPE usage", "lang": "en"}
+{"id": 48, "text": "pending maintenance for critical item", "lang": "en"}
+{"id": 49, "text": "poor lighting near equipment", "lang": "en"}
+{"id": 50, "text": "poorly documented handover", "lang": "en"}
+{"id": 51, "text": "PPE misuse not addressed", "lang": "en"}
+{"id": 52, "text": "pressure drop in critical line", "lang": "en"}
+{"id": 53, "text": "pressure gauge fluctuation dismissed", "lang": "en"}
+{"id": 54, "text": "procedural compliance variable", "lang": "en"}
+{"id": 55, "text": "procedure not fully followed", "lang": "en"}
+{"id": 56, "text": "provisional scaffolding reused", "lang": "en"}
+{"id": 57, "text": "recurrent alarm acknowledged without investigation", "lang": "en"}
+{"id": 58, "text": "recurrent minor faults", "lang": "en"}
+{"id": 59, "text": "recurring manual reset of safety valve", "lang": "en"}
+{"id": 60, "text": "routine deviation accepted", "lang": "en"}
+{"id": 61, "text": "routine inspections delayed", "lang": "en"}
+{"id": 62, "text": "safety alert not disseminated", "lang": "en"}
+{"id": 63, "text": "safety checks performed superficially", "lang": "en"}
+{"id": 64, "text": "safety culture complacency", "lang": "en"}
+{"id": 65, "text": "safety signs missing or faded", "lang": "en"}
+{"id": 66, "text": "scaffolding improvised or reused", "lang": "en"}
+{"id": 67, "text": "sensor drift unnoticed", "lang": "en"}
+{"id": 68, "text": "shutdown aborted without justification", "lang": "en"}
+{"id": 69, "text": "small leak normalized", "lang": "en"}
+{"id": 70, "text": "spare parts reused beyond lifetime", "lang": "en"}
+{"id": 71, "text": "substandard housekeeping in critical areas", "lang": "en"}
+{"id": 72, "text": "supervisory fatigue unaddressed", "lang": "en"}
+{"id": 73, "text": "system repeatedly reset", "lang": "en"}
+{"id": 74, "text": "temporary bypass in place", "lang": "en"}
+{"id": 75, "text": "temporary fix not followed up", "lang": "en"}
+{"id": 76, "text": "temporary repair becoming permanent", "lang": "en"}
+{"id": 77, "text": "tool left unattended", "lang": "en"}
+{"id": 78, "text": "transient condition disregarded", "lang": "en"}
+{"id": 79, "text": "unauthorized access to hazardous zone", "lang": "en"}
+{"id": 80, "text": "unauthorized modification of settings", "lang": "en"}
+{"id": 81, "text": "unexpected noise from equipment", "lang": "en"}
+{"id": 82, "text": "unexpected system behavior observed", "lang": "en"}
+{"id": 83, "text": "unusual odor in process area", "lang": "en"}
+{"id": 84, "text": "unusual vibration not logged", "lang": "en"}
+{"id": 85, "text": "verbal instructions replacing procedures", "lang": "en"}
+{"id": 86, "text": "visual indication ignored", "lang": "en"}
+{"id": 87, "text": "visual inspection skipped", "lang": "en"}
+{"id": 88, "text": "warning tape missing", "lang": "en"}
+{"id": 89, "text": "wear signs unreported", "lang": "en"}
