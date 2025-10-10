@@ -1,67 +1,67 @@
-{"id": 0, "text": "human error", "lang": "en", "hto": "Humano", "label": "human error"}
-{"id": 1, "text": "lack of attention", "lang": "en", "hto": "Humano", "label": "lack of attention"}
-{"id": 2, "text": "operational failure", "lang": "en", "hto": "Humano", "label": "operational failure"}
-{"id": 3, "text": "misjudgment", "lang": "en", "hto": "Humano", "label": "misjudgment"}
-{"id": 4, "text": "improper use of ppe", "lang": "en", "hto": "Humano", "label": "improper use of ppe"}
-{"id": 5, "text": "inadequate decision", "lang": "en", "hto": "Humano", "label": "inadequate decision"}
-{"id": 6, "text": "rule violation", "lang": "en", "hto": "Humano", "label": "rule violation"}
-{"id": 7, "text": "verbal communication error", "lang": "en", "hto": "Humano", "label": "verbal communication error"}
-{"id": 8, "text": "non compliance with procedure", "lang": "en", "hto": "Humano", "label": "non compliance with procedure"}
-{"id": 9, "text": "finger injury", "lang": "en", "hto": "Humano", "label": "finger injury"}
-{"id": 10, "text": "cut injury", "lang": "en", "hto": "Humano", "label": "cut injury"}
-{"id": 11, "text": "door left open", "lang": "en", "hto": "Humano", "label": "door left open"}
-{"id": 12, "text": "not wearing", "lang": "en", "hto": "Humano", "label": "not wearing"}
-{"id": 13, "text": "dropped object", "lang": "en", "hto": "Humano", "label": "dropped object"}
-{"id": 14, "text": "covered detector", "lang": "en", "hto": "Humano", "label": "covered detector"}
-{"id": 15, "text": "no epi", "lang": "en", "hto": "Humano", "label": "no epi"}
-{"id": 16, "text": "without epi", "lang": "en", "hto": "Humano", "label": "without epi"}
-{"id": 17, "text": "lack of concentration", "lang": "en", "hto": "Humano", "label": "lack of concentration"}
-{"id": 18, "text": "operator error", "lang": "en", "hto": "Humano", "label": "operator error"}
-{"id": 19, "text": "did not follow procedure", "lang": "en", "hto": "Humano", "label": "did not follow procedure"}
-{"id": 20, "text": "left open", "lang": "en", "hto": "Humano", "label": "left open"}
-{"id": 21, "text": "hand injury", "lang": "en", "hto": "Humano", "label": "hand injury"}
-{"id": 22, "text": "eye injury", "lang": "en", "hto": "Humano", "label": "eye injury"}
-{"id": 23, "text": "tecnical fault", "lang": "en", "hto": "Tecnico", "label": "tecnical fault"}
-{"id": 24, "text": "equipment breakdown", "lang": "en", "hto": "Tecnico", "label": "equipment breakdown"}
-{"id": 25, "text": "electrical fault", "lang": "en", "hto": "Tecnico", "label": "electrical fault"}
-{"id": 26, "text": "sensor failure", "lang": "en", "hto": "Tecnico", "label": "sensor failure"}
-{"id": 27, "text": "alarm failure", "lang": "en", "hto": "Tecnico", "label": "alarm failure"}
-{"id": 28, "text": "structural failure", "lang": "en", "hto": "Tecnico", "label": "structural failure"}
-{"id": 29, "text": "unintended pressurization", "lang": "en", "hto": "Tecnico", "label": "unintended pressurization"}
-{"id": 30, "text": "dropped object", "lang": "en", "hto": "Tecnico", "label": "dropped object"}
-{"id": 31, "text": "gas leak", "lang": "en", "hto": "Tecnico", "label": "gas leak"}
-{"id": 32, "text": "loss of containment", "lang": "en", "hto": "Tecnico", "label": "loss of containment"}
-{"id": 33, "text": "miscalibrated equipment", "lang": "en", "hto": "Tecnico", "label": "miscalibrated equipment"}
-{"id": 34, "text": "mechanical degradation", "lang": "en", "hto": "Tecnico", "label": "mechanical degradation"}
-{"id": 35, "text": "insulation failure", "lang": "en", "hto": "Tecnico", "label": "insulation failure"}
-{"id": 36, "text": "hydraulic failure", "lang": "en", "hto": "Tecnico", "label": "hydraulic failure"}
-{"id": 37, "text": "seal failure", "lang": "en", "hto": "Tecnico", "label": "seal failure"}
-{"id": 38, "text": "critical system defect", "lang": "en", "hto": "Tecnico", "label": "critical system defect"}
-{"id": 39, "text": "pipe rupture", "lang": "en", "hto": "Tecnico", "label": "pipe rupture"}
-{"id": 40, "text": "communication failure", "lang": "en", "hto": "Organizacional", "label": "communication failure"}
-{"id": 41, "text": "absence of procedure", "lang": "en", "hto": "Organizacional", "label": "absence of procedure"}
-{"id": 42, "text": "inadequate supervision", "lang": "en", "hto": "Organizacional", "label": "inadequate supervision"}
-{"id": 43, "text": "insufficient training", "lang": "en", "hto": "Organizacional", "label": "insufficient training"}
-{"id": 44, "text": "lack of planning", "lang": "en", "hto": "Organizacional", "label": "lack of planning"}
-{"id": 45, "text": "high turnover", "lang": "en", "hto": "Organizacional", "label": "high turnover"}
-{"id": 46, "text": "lack of resources", "lang": "en", "hto": "Organizacional", "label": "lack of resources"}
-{"id": 47, "text": "outdated procedure", "lang": "en", "hto": "Organizacional", "label": "outdated procedure"}
-{"id": 48, "text": "weak security culture", "lang": "en", "hto": "Organizacional", "label": "weak security culture"}
-{"id": 49, "text": "ineffective management of change", "lang": "en", "hto": "Organizacional", "label": "ineffective management of change"}
-{"id": 50, "text": "failure in risk assessment", "lang": "en", "hto": "Organizacional", "label": "failure in risk assessment"}
-{"id": 51, "text": "inappropriate prioritization", "lang": "en", "hto": "Organizacional", "label": "inappropriate prioritization"}
-{"id": 52, "text": "lack of lessons learned", "lang": "en", "hto": "Organizacional", "label": "lack of lessons learned"}
-{"id": 53, "text": "technical review missing", "lang": "en", "hto": "Organizacional", "label": "technical review missing"}
-{"id": 54, "text": "production pressure", "lang": "en", "hto": "Organizacional", "label": "production pressure"}
-{"id": 55, "text": "documentation inconsistency", "lang": "en", "hto": "Organizacional", "label": "documentation inconsistency"}
-{"id": 56, "text": "no procedure", "lang": "en", "hto": "Organizacional", "label": "no procedure"}
-{"id": 57, "text": "lack of communication", "lang": "en", "hto": "Organizacional", "label": "lack of communication"}
-{"id": 58, "text": "missing procedure", "lang": "en", "hto": "Organizacional", "label": "missing procedure"}
-{"id": 59, "text": "no schedule", "lang": "en", "hto": "Organizacional", "label": "no schedule"}
-{"id": 60, "text": "poor maintenance", "lang": "en", "hto": "Organizacional", "label": "poor maintenance"}
-{"id": 61, "text": "no inspection", "lang": "en", "hto": "Organizacional", "label": "no inspection"}
-{"id": 62, "text": "unplanned activity", "lang": "en", "hto": "Organizacional", "label": "unplanned activity"}
-{"id": 63, "text": "preventive maintenance issue", "lang": "en", "hto": "Organizacional", "label": "preventive maintenance issue"}
-{"id": 64, "text": "planning failure", "lang": "en", "hto": "Organizacional", "label": "planning failure"}
-{"id": 65, "text": "no pre-task briefing", "lang": "en", "hto": "Organizacional", "label": "no pre-task briefing"}
-{"id": 66, "text": "poor training", "lang": "en", "hto": "Organizacional", "label": "poor training"}
+{"id": 0, "text": "human error", "lang": "en", "hto": "Humano", "label": "Humano — human error"}
+{"id": 1, "text": "lack of attention", "lang": "en", "hto": "Humano", "label": "Humano — lack of attention"}
+{"id": 2, "text": "operational failure", "lang": "en", "hto": "Humano", "label": "Humano — operational failure"}
+{"id": 3, "text": "misjudgment", "lang": "en", "hto": "Humano", "label": "Humano — misjudgment"}
+{"id": 4, "text": "improper use of ppe", "lang": "en", "hto": "Humano", "label": "Humano — improper use of ppe"}
+{"id": 5, "text": "inadequate decision", "lang": "en", "hto": "Humano", "label": "Humano — inadequate decision"}
+{"id": 6, "text": "rule violation", "lang": "en", "hto": "Humano", "label": "Humano — rule violation"}
+{"id": 7, "text": "verbal communication error", "lang": "en", "hto": "Humano", "label": "Humano — verbal communication error"}
+{"id": 8, "text": "non compliance with procedure", "lang": "en", "hto": "Humano", "label": "Humano — non compliance with procedure"}
+{"id": 9, "text": "finger injury", "lang": "en", "hto": "Humano", "label": "Humano — finger injury"}
+{"id": 10, "text": "cut injury", "lang": "en", "hto": "Humano", "label": "Humano — cut injury"}
+{"id": 11, "text": "door left open", "lang": "en", "hto": "Humano", "label": "Humano — door left open"}
+{"id": 12, "text": "not wearing", "lang": "en", "hto": "Humano", "label": "Humano — not wearing"}
+{"id": 13, "text": "dropped object", "lang": "en", "hto": "Humano", "label": "Humano — dropped object"}
+{"id": 14, "text": "covered detector", "lang": "en", "hto": "Humano", "label": "Humano — covered detector"}
+{"id": 15, "text": "no epi", "lang": "en", "hto": "Humano", "label": "Humano — no epi"}
+{"id": 16, "text": "without epi", "lang": "en", "hto": "Humano", "label": "Humano — without epi"}
+{"id": 17, "text": "lack of concentration", "lang": "en", "hto": "Humano", "label": "Humano — lack of concentration"}
+{"id": 18, "text": "operator error", "lang": "en", "hto": "Humano", "label": "Humano — operator error"}
+{"id": 19, "text": "did not follow procedure", "lang": "en", "hto": "Humano", "label": "Humano — did not follow procedure"}
+{"id": 20, "text": "left open", "lang": "en", "hto": "Humano", "label": "Humano — left open"}
+{"id": 21, "text": "hand injury", "lang": "en", "hto": "Humano", "label": "Humano — hand injury"}
+{"id": 22, "text": "eye injury", "lang": "en", "hto": "Humano", "label": "Humano — eye injury"}
+{"id": 23, "text": "tecnical fault", "lang": "en", "hto": "Tecnico", "label": "Tecnico — tecnical fault"}
+{"id": 24, "text": "equipment breakdown", "lang": "en", "hto": "Tecnico", "label": "Tecnico — equipment breakdown"}
+{"id": 25, "text": "electrical fault", "lang": "en", "hto": "Tecnico", "label": "Tecnico — electrical fault"}
+{"id": 26, "text": "sensor failure", "lang": "en", "hto": "Tecnico", "label": "Tecnico — sensor failure"}
+{"id": 27, "text": "alarm failure", "lang": "en", "hto": "Tecnico", "label": "Tecnico — alarm failure"}
+{"id": 28, "text": "structural failure", "lang": "en", "hto": "Tecnico", "label": "Tecnico — structural failure"}
+{"id": 29, "text": "unintended pressurization", "lang": "en", "hto": "Tecnico", "label": "Tecnico — unintended pressurization"}
+{"id": 30, "text": "dropped object", "lang": "en", "hto": "Tecnico", "label": "Tecnico — dropped object"}
+{"id": 31, "text": "gas leak", "lang": "en", "hto": "Tecnico", "label": "Tecnico — gas leak"}
+{"id": 32, "text": "loss of containment", "lang": "en", "hto": "Tecnico", "label": "Tecnico — loss of containment"}
+{"id": 33, "text": "miscalibrated equipment", "lang": "en", "hto": "Tecnico", "label": "Tecnico — miscalibrated equipment"}
+{"id": 34, "text": "mechanical degradation", "lang": "en", "hto": "Tecnico", "label": "Tecnico — mechanical degradation"}
+{"id": 35, "text": "insulation failure", "lang": "en", "hto": "Tecnico", "label": "Tecnico — insulation failure"}
+{"id": 36, "text": "hydraulic failure", "lang": "en", "hto": "Tecnico", "label": "Tecnico — hydraulic failure"}
+{"id": 37, "text": "seal failure", "lang": "en", "hto": "Tecnico", "label": "Tecnico — seal failure"}
+{"id": 38, "text": "critical system defect", "lang": "en", "hto": "Tecnico", "label": "Tecnico — critical system defect"}
+{"id": 39, "text": "pipe rupture", "lang": "en", "hto": "Tecnico", "label": "Tecnico — pipe rupture"}
+{"id": 40, "text": "communication failure", "lang": "en", "hto": "Organizacional", "label": "Organizacional — communication failure"}
+{"id": 41, "text": "absence of procedure", "lang": "en", "hto": "Organizacional", "label": "Organizacional — absence of procedure"}
+{"id": 42, "text": "inadequate supervision", "lang": "en", "hto": "Organizacional", "label": "Organizacional — inadequate supervision"}
+{"id": 43, "text": "insufficient training", "lang": "en", "hto": "Organizacional", "label": "Organizacional — insufficient training"}
+{"id": 44, "text": "lack of planning", "lang": "en", "hto": "Organizacional", "label": "Organizacional — lack of planning"}
+{"id": 45, "text": "high turnover", "lang": "en", "hto": "Organizacional", "label": "Organizacional — high turnover"}
+{"id": 46, "text": "lack of resources", "lang": "en", "hto": "Organizacional", "label": "Organizacional — lack of resources"}
+{"id": 47, "text": "outdated procedure", "lang": "en", "hto": "Organizacional", "label": "Organizacional — outdated procedure"}
+{"id": 48, "text": "weak security culture", "lang": "en", "hto": "Organizacional", "label": "Organizacional — weak security culture"}
+{"id": 49, "text": "ineffective management of change", "lang": "en", "hto": "Organizacional", "label": "Organizacional — ineffective management of change"}
+{"id": 50, "text": "failure in risk assessment", "lang": "en", "hto": "Organizacional", "label": "Organizacional — failure in risk assessment"}
+{"id": 51, "text": "inappropriate prioritization", "lang": "en", "hto": "Organizacional", "label": "Organizacional — inappropriate prioritization"}
+{"id": 52, "text": "lack of lessons learned", "lang": "en", "hto": "Organizacional", "label": "Organizacional — lack of lessons learned"}
+{"id": 53, "text": "technical review missing", "lang": "en", "hto": "Organizacional", "label": "Organizacional — technical review missing"}
+{"id": 54, "text": "production pressure", "lang": "en", "hto": "Organizacional", "label": "Organizacional — production pressure"}
+{"id": 55, "text": "documentation inconsistency", "lang": "en", "hto": "Organizacional", "label": "Organizacional — documentation inconsistency"}
+{"id": 56, "text": "no procedure", "lang": "en", "hto": "Organizacional", "label": "Organizacional — no procedure"}
+{"id": 57, "text": "lack of communication", "lang": "en", "hto": "Organizacional", "label": "Organizacional — lack of communication"}
+{"id": 58, "text": "missing procedure", "lang": "en", "hto": "Organizacional", "label": "Organizacional — missing procedure"}
+{"id": 59, "text": "no schedule", "lang": "en", "hto": "Organizacional", "label": "Organizacional — no schedule"}
+{"id": 60, "text": "poor maintenance", "lang": "en", "hto": "Organizacional", "label": "Organizacional — poor maintenance"}
+{"id": 61, "text": "no inspection", "lang": "en", "hto": "Organizacional", "label": "Organizacional — no inspection"}
+{"id": 62, "text": "unplanned activity", "lang": "en", "hto": "Organizacional", "label": "Organizacional — unplanned activity"}
+{"id": 63, "text": "preventive maintenance issue", "lang": "en", "hto": "Organizacional", "label": "Organizacional — preventive maintenance issue"}
+{"id": 64, "text": "planning failure", "lang": "en", "hto": "Organizacional", "label": "Organizacional — planning failure"}
+{"id": 65, "text": "no pre-task briefing", "lang": "en", "hto": "Organizacional", "label": "Organizacional — no pre-task briefing"}
+{"id": 66, "text": "poor training", "lang": "en", "hto": "Organizacional", "label": "Organizacional — poor training"}

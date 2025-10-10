@@ -1,67 +1,67 @@
-{"id": 0, "text": "erro humano", "lang": "pt", "hto": "Humano", "label": "erro humano"}
-{"id": 1, "text": "falta de atenção", "lang": "pt", "hto": "Humano", "label": "falta de atenção"}
-{"id": 2, "text": "falha operacional", "lang": "pt", "hto": "Humano", "label": "falha operacional"}
-{"id": 3, "text": "erro de julgamento", "lang": "pt", "hto": "Humano", "label": "erro de julgamento"}
-{"id": 4, "text": "uso incorreto de epi", "lang": "pt", "hto": "Humano", "label": "uso incorreto de epi"}
-{"id": 5, "text": "decisão inadequada", "lang": "pt", "hto": "Humano", "label": "decisão inadequada"}
-{"id": 6, "text": "violação de regra", "lang": "pt", "hto": "Humano", "label": "violação de regra"}
-{"id": 7, "text": "erro de comunicação verbal", "lang": "pt", "hto": "Humano", "label": "erro de comunicação verbal"}
-{"id": 8, "text": "descumprimento de procedimento", "lang": "pt", "hto": "Humano", "label": "descumprimento de procedimento"}
-{"id": 9, "text": "lesão no dedo", "lang": "pt", "hto": "Humano", "label": "lesão no dedo"}
-{"id": 10, "text": "cortou o", "lang": "pt", "hto": "Humano", "label": "cortou o"}
-{"id": 11, "text": "porta deixada aberta", "lang": "pt", "hto": "Humano", "label": "porta deixada aberta"}
-{"id": 12, "text": "não estava usando", "lang": "pt", "hto": "Humano", "label": "não estava usando"}
-{"id": 13, "text": "objeto derrubado", "lang": "pt", "hto": "Humano", "label": "objeto derrubado"}
-{"id": 14, "text": "detector coberto", "lang": "pt", "hto": "Humano", "label": "detector coberto"}
-{"id": 15, "text": "sem epi", "lang": "pt", "hto": "Humano", "label": "sem epi"}
-{"id": 16, "text": "falta de epi", "lang": "pt", "hto": "Humano", "label": "falta de epi"}
-{"id": 17, "text": "falta de concentração", "lang": "pt", "hto": "Humano", "label": "falta de concentração"}
-{"id": 18, "text": "erro do operador", "lang": "pt", "hto": "Humano", "label": "erro do operador"}
-{"id": 19, "text": "não seguiu o procedimento", "lang": "pt", "hto": "Humano", "label": "não seguiu o procedimento"}
-{"id": 20, "text": "deixou aberto", "lang": "pt", "hto": "Humano", "label": "deixou aberto"}
-{"id": 21, "text": "lesão na mão", "lang": "pt", "hto": "Humano", "label": "lesão na mão"}
-{"id": 22, "text": "lesão no olho", "lang": "pt", "hto": "Humano", "label": "lesão no olho"}
-{"id": 23, "text": "falha técnica", "lang": "pt", "hto": "Tecnico", "label": "falha técnica"}
-{"id": 24, "text": "quebra de equipamento", "lang": "pt", "hto": "Tecnico", "label": "quebra de equipamento"}
-{"id": 25, "text": "pane elétrica", "lang": "pt", "hto": "Tecnico", "label": "pane elétrica"}
-{"id": 26, "text": "falha de sensor", "lang": "pt", "hto": "Tecnico", "label": "falha de sensor"}
-{"id": 27, "text": "falha de alarme", "lang": "pt", "hto": "Tecnico", "label": "falha de alarme"}
-{"id": 28, "text": "falha estrutural", "lang": "pt", "hto": "Tecnico", "label": "falha estrutural"}
-{"id": 29, "text": "pressurização indevida", "lang": "pt", "hto": "Tecnico", "label": "pressurização indevida"}
-{"id": 30, "text": "queda de objeto", "lang": "pt", "hto": "Tecnico", "label": "queda de objeto"}
-{"id": 31, "text": "vazamento de gás", "lang": "pt", "hto": "Tecnico", "label": "vazamento de gás"}
-{"id": 32, "text": "perda de contenção", "lang": "pt", "hto": "Tecnico", "label": "perda de contenção"}
-{"id": 33, "text": "equipamento mal calibrado", "lang": "pt", "hto": "Tecnico", "label": "equipamento mal calibrado"}
-{"id": 34, "text": "deterioração mecânica", "lang": "pt", "hto": "Tecnico", "label": "deterioração mecânica"}
-{"id": 35, "text": "falha de isolamento", "lang": "pt", "hto": "Tecnico", "label": "falha de isolamento"}
-{"id": 36, "text": "falha hidráulica", "lang": "pt", "hto": "Tecnico", "label": "falha hidráulica"}
-{"id": 37, "text": "falha de vedação", "lang": "pt", "hto": "Tecnico", "label": "falha de vedação"}
-{"id": 38, "text": "defeito crítico no sistema", "lang": "pt", "hto": "Tecnico", "label": "defeito crítico no sistema"}
-{"id": 39, "text": "ruptura de tubulação", "lang": "pt", "hto": "Tecnico", "label": "ruptura de tubulação"}
-{"id": 40, "text": "falha de comunicação", "lang": "pt", "hto": "Organizacional", "label": "falha de comunicação"}
-{"id": 41, "text": "ausência de procedimento", "lang": "pt", "hto": "Organizacional", "label": "ausência de procedimento"}
-{"id": 42, "text": "supervisão inadequada", "lang": "pt", "hto": "Organizacional", "label": "supervisão inadequada"}
-{"id": 43, "text": "treinamento insuficiente", "lang": "pt", "hto": "Organizacional", "label": "treinamento insuficiente"}
-{"id": 44, "text": "falta de planejamento", "lang": "pt", "hto": "Organizacional", "label": "falta de planejamento"}
-{"id": 45, "text": "turnover elevado", "lang": "pt", "hto": "Organizacional", "label": "turnover elevado"}
-{"id": 46, "text": "falta de recursos", "lang": "pt", "hto": "Organizacional", "label": "falta de recursos"}
-{"id": 47, "text": "procedimento desatualizado", "lang": "pt", "hto": "Organizacional", "label": "procedimento desatualizado"}
-{"id": 48, "text": "cultura de segurança fraca", "lang": "pt", "hto": "Organizacional", "label": "cultura de segurança fraca"}
-{"id": 49, "text": "gestão de mudanças ineficaz", "lang": "pt", "hto": "Organizacional", "label": "gestão de mudanças ineficaz"}
-{"id": 50, "text": "falha na análise de risco", "lang": "pt", "hto": "Organizacional", "label": "falha na análise de risco"}
-{"id": 51, "text": "priorização inadequada", "lang": "pt", "hto": "Organizacional", "label": "priorização inadequada"}
-{"id": 52, "text": "falta de lições aprendidas", "lang": "pt", "hto": "Organizacional", "label": "falta de lições aprendidas"}
-{"id": 53, "text": "revisão técnica ausente", "lang": "pt", "hto": "Organizacional", "label": "revisão técnica ausente"}
-{"id": 54, "text": "pressão por produtividade", "lang": "pt", "hto": "Organizacional", "label": "pressão por produtividade"}
-{"id": 55, "text": "inconsistência em documentação", "lang": "pt", "hto": "Organizacional", "label": "inconsistência em documentação"}
-{"id": 56, "text": "sem procedimento", "lang": "pt", "hto": "Organizacional", "label": "sem procedimento"}
-{"id": 57, "text": "sem comunicação", "lang": "pt", "hto": "Organizacional", "label": "sem comunicação"}
-{"id": 58, "text": "procedimento ausente", "lang": "pt", "hto": "Organizacional", "label": "procedimento ausente"}
-{"id": 59, "text": "sem cronograma", "lang": "pt", "hto": "Organizacional", "label": "sem cronograma"}
-{"id": 60, "text": "manutenção deficiente", "lang": "pt", "hto": "Organizacional", "label": "manutenção deficiente"}
-{"id": 61, "text": "sem inspeção", "lang": "pt", "hto": "Organizacional", "label": "sem inspeção"}
-{"id": 62, "text": "não planejado", "lang": "pt", "hto": "Organizacional", "label": "não planejado"}
-{"id": 63, "text": "manutenção preventiva", "lang": "pt", "hto": "Organizacional", "label": "manutenção preventiva"}
-{"id": 64, "text": "falha no planejamento", "lang": "pt", "hto": "Organizacional", "label": "falha no planejamento"}
-{"id": 65, "text": "sem briefing", "lang": "pt", "hto": "Organizacional", "label": "sem briefing"}
-{"id": 66, "text": "treinamento deficiente", "lang": "pt", "hto": "Organizacional", "label": "treinamento deficiente"}
+{"id": 0, "text": "erro humano", "lang": "pt", "hto": "Humano", "label": "Humano — erro humano"}
+{"id": 1, "text": "falta de atenção", "lang": "pt", "hto": "Humano", "label": "Humano — falta de atenção"}
+{"id": 2, "text": "falha operacional", "lang": "pt", "hto": "Humano", "label": "Humano — falha operacional"}
+{"id": 3, "text": "erro de julgamento", "lang": "pt", "hto": "Humano", "label": "Humano — erro de julgamento"}
+{"id": 4, "text": "uso incorreto de epi", "lang": "pt", "hto": "Humano", "label": "Humano — uso incorreto de epi"}
+{"id": 5, "text": "decisão inadequada", "lang": "pt", "hto": "Humano", "label": "Humano — decisão inadequada"}
+{"id": 6, "text": "violação de regra", "lang": "pt", "hto": "Humano", "label": "Humano — violação de regra"}
+{"id": 7, "text": "erro de comunicação verbal", "lang": "pt", "hto": "Humano", "label": "Humano — erro de comunicação verbal"}
+{"id": 8, "text": "descumprimento de procedimento", "lang": "pt", "hto": "Humano", "label": "Humano — descumprimento de procedimento"}
+{"id": 9, "text": "lesão no dedo", "lang": "pt", "hto": "Humano", "label": "Humano — lesão no dedo"}
+{"id": 10, "text": "cortou o", "lang": "pt", "hto": "Humano", "label": "Humano — cortou o"}
+{"id": 11, "text": "porta deixada aberta", "lang": "pt", "hto": "Humano", "label": "Humano — porta deixada aberta"}
+{"id": 12, "text": "não estava usando", "lang": "pt", "hto": "Humano", "label": "Humano — não estava usando"}
+{"id": 13, "text": "objeto derrubado", "lang": "pt", "hto": "Humano", "label": "Humano — objeto derrubado"}
+{"id": 14, "text": "detector coberto", "lang": "pt", "hto": "Humano", "label": "Humano — detector coberto"}
+{"id": 15, "text": "sem epi", "lang": "pt", "hto": "Humano", "label": "Humano — sem epi"}
+{"id": 16, "text": "falta de epi", "lang": "pt", "hto": "Humano", "label": "Humano — falta de epi"}
+{"id": 17, "text": "falta de concentração", "lang": "pt", "hto": "Humano", "label": "Humano — falta de concentração"}
+{"id": 18, "text": "erro do operador", "lang": "pt", "hto": "Humano", "label": "Humano — erro do operador"}
+{"id": 19, "text": "não seguiu o procedimento", "lang": "pt", "hto": "Humano", "label": "Humano — não seguiu o procedimento"}
+{"id": 20, "text": "deixou aberto", "lang": "pt", "hto": "Humano", "label": "Humano — deixou aberto"}
+{"id": 21, "text": "lesão na mão", "lang": "pt", "hto": "Humano", "label": "Humano — lesão na mão"}
+{"id": 22, "text": "lesão no olho", "lang": "pt", "hto": "Humano", "label": "Humano — lesão no olho"}
+{"id": 23, "text": "falha técnica", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — falha técnica"}
+{"id": 24, "text": "quebra de equipamento", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — quebra de equipamento"}
+{"id": 25, "text": "pane elétrica", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — pane elétrica"}
+{"id": 26, "text": "falha de sensor", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — falha de sensor"}
+{"id": 27, "text": "falha de alarme", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — falha de alarme"}
+{"id": 28, "text": "falha estrutural", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — falha estrutural"}
+{"id": 29, "text": "pressurização indevida", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — pressurização indevida"}
+{"id": 30, "text": "queda de objeto", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — queda de objeto"}
+{"id": 31, "text": "vazamento de gás", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — vazamento de gás"}
+{"id": 32, "text": "perda de contenção", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — perda de contenção"}
+{"id": 33, "text": "equipamento mal calibrado", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — equipamento mal calibrado"}
+{"id": 34, "text": "deterioração mecânica", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — deterioração mecânica"}
+{"id": 35, "text": "falha de isolamento", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — falha de isolamento"}
+{"id": 36, "text": "falha hidráulica", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — falha hidráulica"}
+{"id": 37, "text": "falha de vedação", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — falha de vedação"}
+{"id": 38, "text": "defeito crítico no sistema", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — defeito crítico no sistema"}
+{"id": 39, "text": "ruptura de tubulação", "lang": "pt", "hto": "Tecnico", "label": "Tecnico — ruptura de tubulação"}
+{"id": 40, "text": "falha de comunicação", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — falha de comunicação"}
+{"id": 41, "text": "ausência de procedimento", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — ausência de procedimento"}
+{"id": 42, "text": "supervisão inadequada", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — supervisão inadequada"}
+{"id": 43, "text": "treinamento insuficiente", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — treinamento insuficiente"}
+{"id": 44, "text": "falta de planejamento", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — falta de planejamento"}
+{"id": 45, "text": "turnover elevado", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — turnover elevado"}
+{"id": 46, "text": "falta de recursos", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — falta de recursos"}
+{"id": 47, "text": "procedimento desatualizado", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — procedimento desatualizado"}
+{"id": 48, "text": "cultura de segurança fraca", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — cultura de segurança fraca"}
+{"id": 49, "text": "gestão de mudanças ineficaz", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — gestão de mudanças ineficaz"}
+{"id": 50, "text": "falha na análise de risco", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — falha na análise de risco"}
+{"id": 51, "text": "priorização inadequada", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — priorização inadequada"}
+{"id": 52, "text": "falta de lições aprendidas", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — falta de lições aprendidas"}
+{"id": 53, "text": "revisão técnica ausente", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — revisão técnica ausente"}
+{"id": 54, "text": "pressão por produtividade", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — pressão por produtividade"}
+{"id": 55, "text": "inconsistência em documentação", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — inconsistência em documentação"}
+{"id": 56, "text": "sem procedimento", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — sem procedimento"}
+{"id": 57, "text": "sem comunicação", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — sem comunicação"}
+{"id": 58, "text": "procedimento ausente", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — procedimento ausente"}
+{"id": 59, "text": "sem cronograma", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — sem cronograma"}
+{"id": 60, "text": "manutenção deficiente", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — manutenção deficiente"}
+{"id": 61, "text": "sem inspeção", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — sem inspeção"}
+{"id": 62, "text": "não planejado", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — não planejado"}
+{"id": 63, "text": "manutenção preventiva", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — manutenção preventiva"}
+{"id": 64, "text": "falha no planejamento", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — falha no planejamento"}
+{"id": 65, "text": "sem briefing", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — sem briefing"}
+{"id": 66, "text": "treinamento deficiente", "lang": "pt", "hto": "Organizacional", "label": "Organizacional — treinamento deficiente"}
