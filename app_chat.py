@@ -163,7 +163,7 @@ def parse_user_directives(txt: str) -> Dict[str, Any]:
     force_pt = ('responda em pt' in t) or ('pt-br' in t) or ('apenas pt' in t) or ('responda em português' in t)
 
     # fontes
-    only_sphera = ('only [sphera' in t) or ('somente sphera' in t) or ('use apenas [sphera' in t)
+    only_sphera  = ('only [sphera' in t) or ('somente sphera' in t) or ('use apenas [sphera' in t)
     ignore_gosee = ('ignore gosee' in t) or ('não use gosee' in t)
     ignore_docs  = ('ignore docs' in t)  or ('não use docs' in t)
     ignore_upload= ('ignore upload' in t) or ('não use upload' in t)
@@ -172,35 +172,56 @@ def parse_user_directives(txt: str) -> Dict[str, Any]:
     years = None
     m = re.search(r'(anos|years)\s*=?\s*' + PROMPT_FLOAT, t)
     if m:
-        years = int(float(m.group('val').replace(',', '.')))
-    m2 = re.search(r'(hoje|today)\s*-\s*' + PROMPT_FLOAT + r'\s*(anos|years)', t)
-    if m2 and years is None:
-        years = int(float(m2.group(1).replace(',', '.')))  # fallback; não deve ocorrer
+        try:
+            years = int(float(m.group('val').replace(',', '.')))
+        except Exception:
+            years = None
+
+    # "hoje - N anos" / "today - N years"
+    if years is None:
+        m2 = re.search(r'(hoje|today)\s*-\s*' + PROMPT_FLOAT + r'\s*(anos|years)', t)
+        if m2:
+            try:
+                yrs_txt = m2.group('val')  # <-- CORREÇÃO AQUI (antes era group(1))
+                years = int(float(yrs_txt.replace(',', '.')))
+            except Exception:
+                years = None
 
     # limiares gerais
     sphera_th = None
     m = re.search(r'(limiar|threshold)\s*=?\s*' + PROMPT_FLOAT, t)
     if m:
-        sphera_th = _to_float(m.group('val'))
+        try:
+            sphera_th = float(m.group('val').replace(',', '.'))
+        except Exception:
+            sphera_th = None
 
     # limiares específicos
     ws_th = None
     m = re.search(r'(limiar\s*ws|ws\s*=\s*)' + PROMPT_FLOAT, t)
     if m:
-        ws_th = _to_float(m.group('val'))
+        try:
+            ws_th = float(m.group('val').replace(',', '.'))
+        except Exception:
+            ws_th = None
 
     prec_th = None
     m = re.search(r'(limiar\s*prec|prec\s*=\s*)' + PROMPT_FLOAT, t)
     if m:
-        prec_th = _to_float(m.group('val'))
+        try:
+            prec_th = float(m.group('val').replace(',', '.'))
+        except Exception:
+            prec_th = None
 
     cp_th = None
     m = re.search(r'(limiar\s*cp|cp\s*=\s*)' + PROMPT_FLOAT, t)
     if m:
-        cp_th = _to_float(m.group('val'))
+        try:
+            cp_th = float(m.group('val').replace(',', '.'))
+        except Exception:
+            cp_th = None
 
-    # tarefas específicas
-    # Obs: tolerante a variações; basta conter "a partir do upload" e um dos termos
+    # tarefas específicas (a partir do upload)
     want_ws_only_from_upload   = ('a partir do upload' in t) and (('weak signal' in t) or ('weak signals' in t) or (' ws' in t) or (' ws=' in t))
     want_prec_only_from_upload = ('a partir do upload' in t) and (('precursor' in t) or ('precursors' in t) or (' prec=' in t))
     want_cp_only_from_upload   = ('a partir do upload' in t) and (('cp' in t) or ('fatores' in t) or (' fatores' in t))
