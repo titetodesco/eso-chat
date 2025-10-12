@@ -101,7 +101,7 @@ def l2norm(mat: np.ndarray) -> np.ndarray:
     return mat / n
 
 def cos_topk(E_db: np.ndarray, q: np.ndarray, k: int) -> list[tuple[int, float]]:
-    if E_db is None or E_db.size == 0:
+    if E_db is None or E_db.size == 0 or k <= 0:
         return []
     q = q.astype(np.float32, copy=False)
     q = q / (np.linalg.norm(q) + 1e-9)
@@ -424,10 +424,13 @@ def sphera_similar_to_text(query_text: str, min_sim: float, years: int | None = 
     text_col = "Description" if "Description" in base.columns else base.columns[0]
     id_col = "Event ID" if "Event ID" in base.columns else ("EVENT_NUMBER" if "EVENT_NUMBER" in base.columns else None)
 
-    # alinhar E_sph com o índice filtrado
+    # alinhar E_sph com o índice filtrado (apenas se índice for inteiro)
     try:
-        base_idx = base.index.to_list()
-        E_view = E_sph[base_idx, :]
+        base_idx = base.index.to_numpy()
+        if np.issubdtype(base_idx.dtype, np.integer):
+            E_view = E_sph[base_idx, :]
+        else:
+            raise TypeError("Índice não inteiro; usando E_sph completo.")
     except Exception:
         E_view = E_sph
         base = df_sph
@@ -435,8 +438,11 @@ def sphera_similar_to_text(query_text: str, min_sim: float, years: int | None = 
     qv = encode_query(query_text)
     sims = E_view @ qv
     idx = np.argsort(-sims)
+
     out = []
-    for i in idx[:max(topk, len(idx))]:
+    # PATCH: limitar corretamente ao topk
+    upto = min(topk, len(idx))
+    for i in idx[:upto]:
         s = float(sims[i])
         if s < min_sim:
             break
@@ -596,7 +602,7 @@ if prompt:
                 st.markdown(msg)
             st.session_state.chat.append({"role": "assistant", "content": msg})
 
-        # 2) Dicionários (WS / Precursores / CP) — estritamente dos bancos
+        # 2) Dicionários (WS / Precursores / CP)
         dict_matches = match_from_dicts(query_text, lang, thr_ws, thr_prec, thr_cp, topk=50)
         md2 = []
         if dict_matches["ws"]:
