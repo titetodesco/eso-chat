@@ -43,7 +43,7 @@ Nunca misture outras fontes fora do escopo mesmo que ajude.
 
 IDs/colunas fielmente
 
-Cite o ID exatamente como no bloco (ex.: [Sphera/672489]).
+Cite o ID (EVENT ID) exatamente como no bloco (ex.: [Sphera/672489]).
 
 Traga Location e Description como constam nos blocos Sphera — sem reescrever/traduzir.
 
