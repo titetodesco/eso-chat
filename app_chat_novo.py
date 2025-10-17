@@ -144,8 +144,8 @@ def read_pdf_bytes(b: bytes) -> str:
                 out.append(pg.extract_text() or "")
             except Exception:
                 pass
-        return "
-".join(out)
+        return ""
+.join(out)
     except Exception:
         return ""
 
