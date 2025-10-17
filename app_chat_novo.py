@@ -321,9 +321,7 @@ def ensure_st_encoder():
             st.session_state.st_encoder = SentenceTransformer(ST_MODEL_NAME)
         except Exception as e:
             _fatal("❌ Não foi possível carregar o encoder de embeddings (Sentence-Transformers). "
-    f"Modelo: {ST_MODEL_NAME}
-
-Detalhe: {e}"
+        f"Modelo: {ST_MODEL_NAME} Detalhe: {e}"
             )
 
 def encode_texts(texts: list[str], batch_size: int = 64) -> np.ndarray:
