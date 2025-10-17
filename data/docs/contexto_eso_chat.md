@@ -17,7 +17,7 @@ Padrão de idioma: PT-BR. Mantenha o tom técnico, direto e rastreável.
 
 O app injeta blocos rotulados (exemplos):
 
-[Sphera/<EVENT_NUMBER>] → eventos Sphera (campos: EVENT_NUMBER, FPSO/Location, EVENT_DATE, DESCRIPTION, …)
+[Sphera/<EVENT_NUMBER>] → eventos Sphera (campos: EVENT_NUMBER, LOCATION, EVENT_DATE, DESCRIPTION, …)
 
 [GoSee/<ID>] → observações Go&See
 
@@ -73,7 +73,7 @@ Description → DESCRIPTION
 
 Event Date → EVENT_DATE (formato ISO preferencial)
 
-Nunca deduza Location a partir de DESCRIPTION. Se FPSO/Location não existir no bloco, retorne “N/D”.
+Nunca deduza LOCATION a partir de DESCRIPTION. Se LOCATION não existir no bloco, retorne “N/D”.
 
 4) Idioma (PT/EN) para Dicionários
 
@@ -87,11 +87,11 @@ Os blocos [WS_MATCH], [PREC_MATCH], [CP_MATCH] já trazem o lado correto (PT/EN)
 
 Valores iniciais (ajustáveis pelo usuário/app):
 
-WS: limiar 0,25 (recomendação inicial para maior recall).
+WS: limiar 0,40 (recomendação inicial para maior recall).
 
-Precursores: limiar 0,35 (ajustar conforme ruído).
+Precursores: limiar 0,40 (ajustar conforme ruído).
 
-CP (bag de termos): limiar 0,41 (inicial; ajustar conforme precisão desejada).
+CP (bag de termos): limiar 0,40 (inicial; ajustar conforme precisão desejada).
 
 Se um item não atingir o limiar → não liste.
 Sempre mostre a similaridade no intervalo [0,0–1,0] com 3 casas decimais.
@@ -119,7 +119,7 @@ Se não houver resultado acima do limiar: declare explicitamente.
 7) Formatos de Resposta (templates rápidos)
 7.1) Sphera — similares aos do upload (últimos N anos)
 Event Id	Location	Description	Sentença (upload)	Similaridade
-[Sphera/####]	<FPSO/Location>	<DESCRIPTION>	“<trecho do upload>”	0.457
+[Sphera/####]	<Location>	<DESCRIPTION>	“<trecho do upload>”	0.457
 
 Observação: Campos exatamente como no bloco Sphera. Sem reescrita.
 
