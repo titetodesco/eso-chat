@@ -379,7 +379,7 @@ if df_sph is not None:
     _sph_loc_col = get_sphera_location_col(df_sph)  # << aqui
     if _sph_loc_col:
         _sph_loc_options = sorted([str(x) for x in df_sph[_sph_loc_col].dropna().unique()])[:500]
-    _sph_has_desc = "_sph_desc_col or "Description" in df_sph.columns or "DESCRIPTION" in df_sph.columns
+    _sph_has_desc = "Description" in df_sph.columns or "DESCRIPTION" in df_sph.columns
 
 
 sph_loc_selected = st.sidebar.multiselect(
