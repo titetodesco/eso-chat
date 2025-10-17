@@ -190,11 +190,7 @@ def read_any(uploaded) -> str:
 def chunk_text(text: str, max_chars=1200, overlap=200):
     if not text:
         return []
-    text = text.replace("
-", "
-").replace("
-", "
-")
+    text = text.replace("", "").replace("", "")
     parts, start, L = [], 0, len(text)
     ov = max(0, min(overlap, max_chars - 1))
     while start < L:
