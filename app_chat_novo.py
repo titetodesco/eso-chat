@@ -368,20 +368,19 @@ thr_cp     = st.sidebar.slider("Limiar CP", 0.0, 1.0, 0.25, 0.01)
 
 use_catalog = st.sidebar.checkbox("Injetar datasets_context.md", True)
 
-# ---------- Filtros Avançados (NOVO) ----------
+# ---------- Filtros Avançados — Sphera ----------
 st.sidebar.subheader("Filtros avançados — Sphera")
 _sph_loc_col = None
 _sph_loc_options = []
 _sph_has_desc = False
+desc_candidates = ["Description", "DESCRIPTION"]
+_sph_desc_col = next((c for c in desc_candidates if c in (df_sph.columns if df_sph is not None else [])), None)
 if df_sph is not None:
-    # detectar coluna de localização
-    for cand in ["Location", "Area", "Setor", "FPSO/Unidade", "FPSO", "Unidade"]:
-        if cand in df_sph.columns:
-            _sph_loc_col = cand
-            break
+    _sph_loc_col = get_sphera_location_col(df_sph)  # << aqui
     if _sph_loc_col:
         _sph_loc_options = sorted([str(x) for x in df_sph[_sph_loc_col].dropna().unique()])[:500]
-    _sph_has_desc = "Description" in df_sph.columns
+    _sph_has_desc = "_sph_desc_col or "Description" in df_sph.columns or "DESCRIPTION" in df_sph.columns
+
 
 sph_loc_selected = st.sidebar.multiselect(
     "Location (se disponível)", options=_sph_loc_options, default=[]
@@ -451,9 +450,36 @@ def apply_advanced_filters(base: pd.DataFrame) -> pd.DataFrame:
         d = d[d[_sph_loc_col].astype(str).isin(set(sph_loc_selected))]
     if _sph_has_desc and sph_desc_contains:
         pat = re.escape(sph_desc_contains)
-        d = d[d["Description"].astype(str).str.contains(pat, case=False, na=False)]
+        desc_col = _sph_desc_col or ("Description" if "Description" in d.columns else None)
+        if desc_col:
+            d = d[d[desc_col].astype(str).str.contains(pat, case=False, na=False)]
     return d
 
+def get_sphera_location_col(df: pd.DataFrame) -> str | None:
+    """
+    Retorna a coluna correta para 'Location' na Sphera, por ordem de preferência:
+    1) LOCATION
+    2) FPSO
+    3) Location
+    4) FPSO/Unidade
+    5) Unidade
+    (Só cai para AREA/Setor se nada acima existir — e avisa no UI.)
+    """
+    if df is None:
+        return None
+    preferred = ["LOCATION", "FPSO", "Location", "FPSO/Unidade", "Unidade"]
+    fallback  = ["AREA", "Area", "Setor"]
+    for c in preferred:
+        if c in df.columns:
+            return c
+    for c in fallback:
+        if c in df.columns:
+            st.warning(
+                "⚠️ Usando '{}' como fallback de Location (colunas LOCATION/FPSO/Location ausentes)."
+                .format(c)
+            )
+            return c
+    return None
 
 def sphera_similar_to_text(query_text: str, min_sim: float, years: int | None = None, topk: int = 50):
     """Retorna [(event_id, sim, row)] com sim >= min_sim (cosine), usando Sphera/Description e filtros avançados."""
@@ -753,17 +779,23 @@ if prompt:
         query_text = up_raw if up_raw else prompt
         years = years_back if apply_time_filter else None
 
-        # 1) Eventos Sphera semelhantes (limiar de **similaridade do cosseno**) 
+        # 1) Eventos Sphera semelhantes (limiar de similaridade do cosseno)
         hits = sphera_similar_to_text(query_text, thr_sphera, years=years, topk=200)
+        loc_col = get_sphera_location_col(df_sph)  # << escolha centralizada
+        desc_col = _sph_desc_col or ("Description" if "Description" in (df_sph.columns if df_sph is not None else []) else None)
+        
         if hits:
             md = [
                 "**Eventos do Sphera (calculado no app, limiar de similaridade aplicado)**",
-                "| Event Id | Similaridade (cos) | Description |","|---:|---:|---|",
+                "| Event Id | Similaridade (cos) | Location | Description |",
+                "|---:|---:|---|---|",
             ]
             for evid, s, row in hits:
-                desc = str(row.get("Description", ""))[:4000].replace("", " ")
-                md.append(f"| {evid} | {s:.3f} | {desc} |")
-            tbl = "".join(md)
+                loc = str(row.get(loc_col, "N/D")) if loc_col else "N/D"
+                desc_val = str(row.get(desc_col, "")) if desc_col else str(row.get("Description",""))
+                desc = desc_val.replace("\n", " ")[:4000]
+                md.append("| {} | {:.3f} | {} | {} |".format(evid, s, loc, desc))
+            tbl = "\n".join(md)
             with st.chat_message("assistant"):
                 st.markdown(tbl)
             st.session_state.chat.append({"role": "assistant", "content": tbl})
@@ -810,6 +842,15 @@ if prompt:
             except Exception:
                 pass
         msgs.append({"role": "user", "content": f"Explique, sem buscar outras fontes, os resultados calculados no app. Limiar Sphera={thr_sphera}, anos={'todos' if not years else years}."})
+        msgs.append({
+          "role": "user",
+          "content": (
+              "Regra obrigatória (Sphera): Location deve vir da coluna LOCATION, "
+              "ou do campo FPSO quando LOCATION não existir; nunca usar AREA como Location. "
+              "Se a coluna não existir nos blocos, retornar 'N/D'."
+          )
+        })
+
 
         with st.chat_message("assistant"):
             with st.spinner("Consultando o modelo (análise explicativa)…"):
