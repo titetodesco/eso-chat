@@ -34,22 +34,14 @@ def load_file_text(p: Path) -> str:
 
 def build_system_prompt() -> str:
     preambulo = (
-        "Você é o ESO-CHAT (segurança operacional).
-"
-        "Siga estritamente as regras e convenções do contexto abaixo.
-"
-        "Responda em PT-BR por padrão.
-"
-        "Quando usar buscas semânticas, sempre mostre IDs/Fonte e similaridade.
-"
-        "Não invente dados fora dos contextos fornecidos.
-"
+        "Você é o ESO-CHAT (segurança operacional)."
+        "Siga estritamente as regras e convenções do contexto abaixo."
+        "Responda em PT-BR por padrão."
+        "Quando usar buscas semânticas, sempre mostre IDs/Fonte e similaridade."
+        "Não invente dados fora dos contextos fornecidos."
     )
     ctx_md = load_file_text(CONTEXT_MD_REL_PATH)
-    return preambulo + "
-
-=== CONTEXTO ESO-CHAT (.md) ===
-" + ctx_md
+    return preambulo + " === CONTEXTO ESO-CHAT (.md) === " + ctx_md
 
 if "system_prompt" not in st.session_state:
     st.session_state.system_prompt = build_system_prompt()
@@ -81,13 +73,9 @@ try:
     from sentence_transformers import SentenceTransformer
 except Exception as e:
     _fatal(
-        "❌ sentence-transformers não está disponível.
-
-"
+        "❌ sentence-transformers não está disponível."
         "Instale as dependências (incluindo torch CPU) conforme o requirements.txt recomendado."
-        f"
-
-Detalhe: {e}"
+        f"Detalhe: {e}"
     )
 
 try:
