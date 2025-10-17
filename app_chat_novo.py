@@ -781,22 +781,19 @@ if prompt:
         dict_matches = match_from_dicts(query_text, lang, thr_ws, thr_prec, thr_cp, topk=50)
         md2 = []
         if dict_matches["ws"]:
-            md2.append("
-**WS (≥ limiar, calculado no app)**")
+            md2.append("**WS (≥ limiar, calculado no app)**")
             md2.append("| Rank | Termo | Similaridade |")
             md2.append("|---:|---|---:|")
             for r, (label, s) in enumerate(dict_matches["ws"], 1):
                 md2.append(f"| {r} | {label} | {s:.3f} |")
         if dict_matches["prec"]:
-            md2.append("
-**Precursores (≥ limiar, calculado no app)**")
+            md2.append("**Precursores (≥ limiar, calculado no app)**")
             md2.append("| Rank | Termo | Similaridade |")
             md2.append("|---:|---|---:|")
             for r, (label, s) in enumerate(dict_matches["prec"], 1):
                 md2.append(f"| {r} | {label} | {s:.3f} |")
         if dict_matches["cp"]:
-            md2.append("
-**CP (≥ limiar, calculado no app)**")
+            md2.append("**CP (≥ limiar, calculado no app)**")
             md2.append("| Rank | Fator | Similaridade |")
             md2.append("|---:|---|---:|")
             for r, (label, s) in enumerate(dict_matches["cp"], 1):
