@@ -609,14 +609,10 @@ def render_interpretation_via_model(prompt: str, context_hint: str):
     msgs = [
         {"role": "system", "content": st.session_state.system_prompt},
         {"role": "user", "content": (
-            "Você é um analista de Segurança Operacional.
-"
-            "Escreva uma interpretação breve e objetiva dos resultados, com 3–6 bullet points,
-"
-            "indicando padrões, possíveis causas (WS/Precursores/CP) e sugestões práticas de follow-up.
-"
-            f"Contexto: {context_hint}
-"
+            "Você é um analista de Segurança Operacional."
+            "Escreva uma interpretação breve e objetiva dos resultados, com 3–6 bullet points,"
+            "indicando padrões, possíveis causas (WS/Precursores/CP) e sugestões práticas de follow-up."
+            f"Contexto: {context_hint}"
             f"Consulta do usuário: {prompt}"
         )}
     ]
@@ -631,13 +627,9 @@ def render_descriptive_summary_via_model(prompt: str, stats_text: str):
     msgs = [
         {"role": "system", "content": st.session_state.system_prompt},
         {"role": "user", "content": (
-            "Produza um resumo descritivo em 4–6 linhas sobre a busca realizada,
-"
-            "mencionando fontes com resultados, nível de similaridade observado e limitações,
-"
-            "usando tom técnico e claro.
-" + stats_text + f"
-Pergunta do usuário: {prompt}"
+            "Produza um resumo descritivo em 4–6 linhas sobre a busca realizada,"
+            "mencionando fontes com resultados, nível de similaridade observado e limitações,"
+            "usando tom técnico e claro." + stats_text + f"Pergunta do usuário: {prompt}"
         )}
     ]
     try:
@@ -658,8 +650,7 @@ def render_stats_section(title: str, per_source_stats: dict, extra_lines: list[s
         )
     if extra_lines:
         lines.extend(extra_lines)
-    st.markdown("
-".join(lines))
+    st.markdown("".join(lines))
 
 # ---------- Busca mista (com filtros aplicados à Sphera) ----------
 
@@ -763,8 +754,7 @@ if prompt:
 
     # Opcional: injeta um recorte 'cru' do upload (máx N chars)
     up_raw = get_upload_raw(upload_raw_max)
-    lang = guess_lang((prompt or "") + "
-" + (up_raw or ""))
+    lang = guess_lang((prompt or "") + "" + (up_raw or ""))
 
     if only_sphera:
         # -------- Fluxo "Somente Sphera" --------
@@ -775,17 +765,13 @@ if prompt:
         hits = sphera_similar_to_text(query_text, thr_sphera, years=years, topk=200)
         if hits:
             md = [
-                "**Eventos do Sphera (calculado no app, limiar de similaridade aplicado)**
-",
-                "| Event Id | Similaridade (cos) | Description |",
-                "|---:|---:|---|",
+                "**Eventos do Sphera (calculado no app, limiar de similaridade aplicado)**",
+                "| Event Id | Similaridade (cos) | Description |","|---:|---:|---|",
             ]
             for evid, s, row in hits:
-                desc = str(row.get("Description", ""))[:4000].replace("
-", " ")
+                desc = str(row.get("Description", ""))[:4000].replace("", " ")
                 md.append(f"| {evid} | {s:.3f} | {desc} |")
-            tbl = "
-".join(md)
+            tbl = "".join(md)
             with st.chat_message("assistant"):
                 st.markdown(tbl)
             st.session_state.chat.append({"role": "assistant", "content": tbl})
@@ -821,8 +807,7 @@ if prompt:
                 md2.append(f"| {r} | {label} | {s:.3f} |")
 
         if md2:
-            out2 = "
-".join(md2)
+            out2 = "".join(md2)
             with st.chat_message("assistant"):
                 st.markdown(out2)
             st.session_state.chat.append({"role": "assistant", "content": out2})
@@ -872,19 +857,14 @@ if prompt:
                     interp = render_interpretation_via_model(prompt, context_hint)
                 else:
                     interp = (
-                        "- Similaridades indicam proximidade textual com descrições Sphera;
-"
-                        "- Ajuste de limiar pode aumentar precisão (↑) ou abrangência (↓);
-"
-                        "- Verificar manualmente top eventos;
-"
+                        "- Similaridades indicam proximidade textual com descrições Sphera;"
+                        "- Ajuste de limiar pode aumentar precisão (↑) ou abrangência (↓);"
+                        "- Verificar manualmente top eventos;"
                         "- Revisar WS/Precursores/CP com maior similaridade para ações preventivas."
                     )
-                st.markdown("**4. Interpretação dos resultados (exemplo típico)**
-" + interp)
+                st.markdown("**4. Interpretação dos resultados (exemplo típico)**" + interp)
 
-                stats_text = "
-".join(extra)
+                stats_text = "".join(extra)
                 if summary_via_model:
                     desc = render_descriptive_summary_via_model(prompt, stats_text)
                 else:
@@ -893,16 +873,14 @@ if prompt:
                         "considerando o escopo e filtros aplicados. As correspondências em WS, "
                         "Precursores e CP reforçam a leitura contextual e subsidiam decisões de risco."
                     )
-                st.markdown("**Resumo descritivo da consulta**
-" + desc)
+                st.markdown("**Resumo descritivo da consulta**" + desc)
 
     else:
         # -------- Fluxo RAG “clássico” --------
         blocks = search_all(prompt)
         up_raw = get_upload_raw(upload_raw_max)
         if up_raw:
-            blocks = [f"[UPLOAD_RAW]
-{up_raw}"] + blocks
+            blocks = [f"[UPLOAD_RAW]{up_raw}"] + blocks
 
         msgs = [{"role": "system", "content": st.session_state.system_prompt}]
         if use_catalog and os.path.exists(DATASETS_CONTEXT_FILE):
@@ -913,11 +891,8 @@ if prompt:
                 pass
 
         if blocks:
-            ctx = "
-
-".join(blocks)
-            msgs.append({"role": "user", "content": f"CONTEXTOS (HIST + UPLOAD):
-{ctx}"})
+            ctx = "".join(blocks)
+            msgs.append({"role": "user", "content": f"CONTEXTOS (HIST + UPLOAD):{ctx}"})
             msgs.append({"role": "user", "content": f"PERGUNTA: {prompt}"})
         else:
             msgs.append({"role": "user", "content": prompt})
@@ -956,19 +931,14 @@ if prompt:
                     interp = render_interpretation_via_model(prompt, context_hint)
                 else:
                     interp = (
-                        "- Resultados agregam múltiplas fontes com base em similaridade;
-"
-                        "- Priorize itens com maior similaridade do cosseno e origem Sphera;
-"
-                        "- Use WS/Prec/CP como apoio a ações corretivas/preventivas;
-"
+                        "- Resultados agregam múltiplas fontes com base em similaridade;"
+                        "- Priorize itens com maior similaridade do cosseno e origem Sphera;"
+                        "- Use WS/Prec/CP como apoio a ações corretivas/preventivas;"
                         "- Ajuste Top-K/limiares para refinar o escopo."
                     )
-                st.markdown("**4. Interpretação dos resultados (exemplo típico)**
-" + interp)
+                st.markdown("**4. Interpretação dos resultados (exemplo típico)**" + interp)
 
-                stats_text = "
-".join(extra)
+                stats_text = "".join(extra)
                 if summary_via_model:
                     desc = render_descriptive_summary_via_model(prompt, stats_text)
                 else:
@@ -977,8 +947,7 @@ if prompt:
                         "As similaridades mais altas (cosseno) indicam proximidade textual e relevância operacional. "
                         "Ajustes de limiar/Top-K podem ampliar ou reduzir a abrangência."
                     )
-                st.markdown("**Resumo descritivo da consulta**
-" + desc)
+                st.markdown("**Resumo descritivo da consulta**" + desc)
 
 # ---------- Painel / Diagnóstico ----------
 debug = st.sidebar.checkbox("Mostrar painel de diagnóstico", False)
