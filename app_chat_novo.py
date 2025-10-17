@@ -30,8 +30,7 @@ def load_file_text(p: Path) -> str:
     try:
         return p.read_text(encoding="utf-8")
     except Exception as e:
-        return f"[AVISO] Não consegui ler {p}: {e}
-(Prosseguindo sem esse contexto.)"
+        return f"[AVISO] Não consegui ler {p}: {e} (Prosseguindo sem esse contexto.)"
 
 def build_system_prompt() -> str:
     preambulo = (
