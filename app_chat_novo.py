@@ -708,8 +708,7 @@ def search_all(query: str) -> list[str]:
                 row = df_gos.iloc[i]
                 gid = row.get(id_col, f"row{i}") if id_col else f"row{i}"
                 snippet = str(row.get(text_col, ""))[:800]
-                blocks.append((s, f"[GoSee/{gid}] (sim={s:.3f})
-{snippet}"))
+                blocks.append((s, f"[GoSee/{gid}] (sim={s:.3f}){snippet}"))
 
     # Docs (history)
     if not only_sphera:
@@ -719,8 +718,7 @@ def search_all(query: str) -> list[str]:
                 r = rows_his[i]
                 src = f"Docs/{r.get('source','?')}/{r.get('chunk_id', 0)}"
                 snippet = str(r.get("text", ""))[:800]
-                blocks.append((s, f"[{src}] (sim={s:.3f})
-{snippet}"))
+                blocks.append((s, f"[{src}] (sim={s:.3f}){snippet}"))
 
     # Upload
     if not only_sphera:
@@ -729,8 +727,7 @@ def search_all(query: str) -> list[str]:
             for i, s in hits:
                 meta = st.session_state.upld_meta[i]
                 snippet = st.session_state.upld_texts[i][:800]
-                blocks.append((s, f"[UPLOAD {meta['file']} / {meta['chunk_id']}] (sim={s:.3f})
-{snippet}"))
+                blocks.append((s, f"[UPLOAD {meta['file']} / {meta['chunk_id']}] (sim={s:.3f}){snippet}"))
 
     blocks.sort(key=lambda x: -x[0])
     return [b for _, b in blocks]
