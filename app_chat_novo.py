@@ -554,9 +554,9 @@ def get_upload_raw(max_chars: int) -> str:
         t = t[: max_chars - total]
         buf.append(t)
         total += len(t)
-    return "
+    return ""
 
-".join(buf).strip()
+.join(buf).strip()
 
 # (NOVO) Parser simples para blocos do RAG misto
 
