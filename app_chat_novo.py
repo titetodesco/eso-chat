@@ -154,8 +154,8 @@ def read_docx_bytes(b: bytes) -> str:
         return ""
     try:
         doc = docx.Document(io.BytesIO(b))
-        return "
-".join(p.text for p in doc.paragraphs)
+        return ""
+.join(p.text for p in doc.paragraphs)
     except Exception:
         return ""
 
