@@ -1,17 +1,14 @@
-# app_chat.py — ESO • CHAT (Embeddings-only) — versão com patches PT/EN, “Somente Sphera”
-# + Sumário de Resultados (estatísticas, visualizações sugeridas e interpretação) ao final de cada interação
+# app_chat.py — ESO • CHAT (Embeddings-only)
+# Versão com patches PT/EN, “Somente Sphera”, Sumário de Resultados e **Filtros avançados (Location / Description contém)**
 # - Busca SEMÂNTICA usando embeddings:
 #   • Sphera:   data/analytics/sphera_embeddings.npz + sphera.parquet
 #   • GoSee:    data/analytics/gosee_embeddings.npz  + gosee.parquet
 #   • History:  data/analytics/history_embeddings.npz + history_texts.jsonl
-# - Dicionários (seleção automática de idioma):
-#   • WS:   ws_embeddings_pt/en.(npz|parquet|jsonl)
-#   • Prec: prec_embeddings_pt/en.(npz|parquet|jsonl)
-#   • CP:   cp_embeddings.npz + cp_labels.(parquet|jsonl)
-# - Uploads: faz chunk + embeddings em tempo real (Sentence-Transformers)
-# - “Somente Sphera”: cálculo e filtro no app (threshold e últimos N anos), sem misturar outras fontes
-# - Injeta apenas TRECHOS recuperados (quando não estiver em “Somente Sphera”)
-# - NOVO: Sumário ao final com: (2) Estatísticas principais, (3) Visualizações (exemplo de layout), (4) Interpretação (exemplo típico)
+# - Dicionários (seleção automática de idioma): WS / Precursores / CP
+# - Uploads: chunk + embeddings em tempo real (Sentence-Transformers)
+# - “Somente Sphera”: cálculo local (limiar de **similaridade do cosseno** e últimos N anos)
+# - Sumário ao final: (2) Estatísticas, (3) Visualizações (exemplo), (4) Interpretação + Resumo descritivo
+# - NOVO: Filtros avançados: Location (multiselect) e "Description contém" (substring, case-insensitive)
 
 import os
 import io
@@ -33,18 +30,27 @@ def load_file_text(p: Path) -> str:
     try:
         return p.read_text(encoding="utf-8")
     except Exception as e:
-        return f"[AVISO] Não consegui ler {p}: {e}\n(Prosseguindo sem esse contexto.)"
+        return f"[AVISO] Não consegui ler {p}: {e}
+(Prosseguindo sem esse contexto.)"
 
 def build_system_prompt() -> str:
     preambulo = (
-        "Você é o ESO-CHAT (segurança operacional).\n"
-        "Siga estritamente as regras e convenções do contexto abaixo.\n"
-        "Responda em PT-BR por padrão.\n"
-        "Quando usar buscas semânticas, sempre mostre IDs/Fonte e similaridade.\n"
-        "Não invente dados fora dos contextos fornecidos.\n"
+        "Você é o ESO-CHAT (segurança operacional).
+"
+        "Siga estritamente as regras e convenções do contexto abaixo.
+"
+        "Responda em PT-BR por padrão.
+"
+        "Quando usar buscas semânticas, sempre mostre IDs/Fonte e similaridade.
+"
+        "Não invente dados fora dos contextos fornecidos.
+"
     )
     ctx_md = load_file_text(CONTEXT_MD_REL_PATH)
-    return preambulo + "\n\n=== CONTEXTO ESO-CHAT (.md) ===\n" + ctx_md
+    return preambulo + "
+
+=== CONTEXTO ESO-CHAT (.md) ===
+" + ctx_md
 
 if "system_prompt" not in st.session_state:
     st.session_state.system_prompt = build_system_prompt()
@@ -76,9 +82,13 @@ try:
     from sentence_transformers import SentenceTransformer
 except Exception as e:
     _fatal(
-        "❌ sentence-transformers não está disponível.\n\n"
+        "❌ sentence-transformers não está disponível.
+
+"
         "Instale as dependências (incluindo torch CPU) conforme o requirements.txt recomendado."
-        f"\n\nDetalhe: {e}"
+        f"
+
+Detalhe: {e}"
     )
 
 try:
@@ -121,6 +131,7 @@ def load_npz_embeddings(path: str) -> np.ndarray | None:
                 if key in z:
                     E = np.array(z[key]).astype(np.float32, copy=False)
                     return l2norm(E)
+            # fallback: maior matriz 2D
             best_k, best_n = None, -1
             for k in z.files:
                 arr = z[k]
@@ -146,7 +157,8 @@ def read_pdf_bytes(b: bytes) -> str:
                 out.append(pg.extract_text() or "")
             except Exception:
                 pass
-        return "\n".join(out)
+        return "
+".join(out)
     except Exception:
         return ""
 
@@ -155,7 +167,8 @@ def read_docx_bytes(b: bytes) -> str:
         return ""
     try:
         doc = docx.Document(io.BytesIO(b))
-        return "\n".join(p.text for p in doc.paragraphs)
+        return "
+".join(p.text for p in doc.paragraphs)
     except Exception:
         return ""
 
@@ -190,7 +203,11 @@ def read_any(uploaded) -> str:
 def chunk_text(text: str, max_chars=1200, overlap=200):
     if not text:
         return []
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("
+", "
+").replace("
+", "
+")
     parts, start, L = [], 0, len(text)
     ov = max(0, min(overlap, max_chars - 1))
     while start < L:
@@ -234,35 +251,10 @@ if "upld_emb" not in st.session_state:
 if "st_encoder" not in st.session_state:
     st.session_state.st_encoder = None
 
-# ---------- Preferências de saída (NOVO) ----------
+# ---------- Preferências de saída ----------
 st.sidebar.subheader("Saídas (Sumário)")
 show_summary = st.sidebar.checkbox("Exibir sumário da consulta", True)
 summary_via_model = st.sidebar.checkbox("Resumo descritivo com modelo", True)
-
-
-def ensure_st_encoder():
-    if st.session_state.st_encoder is None:
-        try:
-            st.session_state.st_encoder = SentenceTransformer(ST_MODEL_NAME)
-        except Exception as e:
-            _fatal(
-                "❌ Não foi possível carregar o encoder de embeddings (Sentence-Transformers). "
-                f"Modelo: {ST_MODEL_NAME}\n\nDetalhe: {e}"
-            )
-
-def encode_texts(texts: list[str], batch_size: int = 64) -> np.ndarray:
-    ensure_st_encoder()
-    M = st.session_state.st_encoder.encode(
-        texts, batch_size=batch_size, show_progress_bar=False,
-        convert_to_numpy=True, normalize_embeddings=True
-    ).astype(np.float32)
-    return M
-
-def encode_query(q: str) -> np.ndarray:
-    ensure_st_encoder()
-    v = st.session_state.st_encoder.encode([q], convert_to_numpy=True, normalize_embeddings=True)[0].astype(np.float32)
-    v /= (np.linalg.norm(v) + 1e-9)
-    return v
 
 # ---------- Carregamento dos catálogos ----------
 SPH_EMB_PATH = os.path.join(AN_DIR, "sphera_embeddings.npz")
@@ -338,6 +330,34 @@ def select_prec_bank(lang: str):
 def select_cp_bank():
     return load_dict_bank(CP_NPZ, CP_LBL_PARQ)
 
+# ---------- Funções de embeddings ----------
+
+def ensure_st_encoder():
+    if st.session_state.st_encoder is None:
+        try:
+            st.session_state.st_encoder = SentenceTransformer(ST_MODEL_NAME)
+        except Exception as e:
+            _fatal(
+                "❌ Não foi possível carregar o encoder de embeddings (Sentence-Transformers). "
+                f"Modelo: {ST_MODEL_NAME}
+
+Detalhe: {e}"
+            )
+
+def encode_texts(texts: list[str], batch_size: int = 64) -> np.ndarray:
+    ensure_st_encoder()
+    M = st.session_state.st_encoder.encode(
+        texts, batch_size=batch_size, show_progress_bar=False,
+        convert_to_numpy=True, normalize_embeddings=True
+    ).astype(np.float32)
+    return M
+
+def encode_query(q: str) -> np.ndarray:
+    ensure_st_encoder()
+    v = st.session_state.st_encoder.encode([q], convert_to_numpy=True, normalize_embeddings=True)[0].astype(np.float32)
+    v /= (np.linalg.norm(v) + 1e-9)
+    return v
+
 # ---------- Sidebar ----------
 st.sidebar.header("Configurações")
 with st.sidebar.expander("Modelo de Resposta", expanded=False):
@@ -363,12 +383,35 @@ apply_time_filter = st.sidebar.checkbox("Sphera: filtrar últimos N anos", True)
 years_back = st.sidebar.slider("N (anos)", 1, 10, 3, 1)
 
 st.sidebar.subheader("Limiares de Similaridade (0–1)")
-thr_sphera = st.sidebar.slider("Limiar Sphera (Description)", 0.0, 1.0, 0.25, 0.01)
+thr_sphera = st.sidebar.slider("Limiar Sphera (Description — cos sim)", 0.0, 1.0, 0.25, 0.01)
 thr_ws     = st.sidebar.slider("Limiar WS", 0.0, 1.0, 0.25, 0.01)
 thr_prec   = st.sidebar.slider("Limiar Precursores", 0.0, 1.0, 0.25, 0.01)
 thr_cp     = st.sidebar.slider("Limiar CP", 0.0, 1.0, 0.25, 0.01)
 
 use_catalog = st.sidebar.checkbox("Injetar datasets_context.md", True)
+
+# ---------- Filtros Avançados (NOVO) ----------
+st.sidebar.subheader("Filtros avançados — Sphera")
+_sph_loc_col = None
+_sph_loc_options = []
+_sph_has_desc = False
+if df_sph is not None:
+    # detectar coluna de localização
+    for cand in ["Location", "Area", "Setor", "FPSO/Unidade", "FPSO", "Unidade"]:
+        if cand in df_sph.columns:
+            _sph_loc_col = cand
+            break
+    if _sph_loc_col:
+        _sph_loc_options = sorted([str(x) for x in df_sph[_sph_loc_col].dropna().unique()])[:500]
+    _sph_has_desc = "Description" in df_sph.columns
+
+sph_loc_selected = st.sidebar.multiselect(
+    "Location (se disponível)", options=_sph_loc_options, default=[]
+) if _sph_loc_col else []
+
+sph_desc_contains = st.sidebar.text_input(
+    "Description contém (substring)", value=""
+) if _sph_has_desc else ""
 
 uploaded_files = st.sidebar.file_uploader(
     "Upload (PDF, DOCX, XLSX, CSV, TXT/MD)",
@@ -410,7 +453,8 @@ if uploaded_files:
             st.session_state.upld_meta.extend(new_meta)
             st.success(f"Upload indexado: {len(new_texts)} chunks.")
 
-# ---------- Funções de busca ----------
+# ---------- Funções de busca / filtros ----------
+
 def filter_sphera_by_date(df: pd.DataFrame, years: int) -> pd.DataFrame:
     if df is None or "EVENT_DATE" not in df.columns:
         return df
@@ -422,13 +466,25 @@ def filter_sphera_by_date(df: pd.DataFrame, years: int) -> pd.DataFrame:
     except Exception:
         return df
 
+
+def apply_advanced_filters(base: pd.DataFrame) -> pd.DataFrame:
+    d = base
+    if _sph_loc_col and sph_loc_selected:
+        d = d[d[_sph_loc_col].astype(str).isin(set(sph_loc_selected))]
+    if _sph_has_desc and sph_desc_contains:
+        pat = re.escape(sph_desc_contains)
+        d = d[d["Description"].astype(str).str.contains(pat, case=False, na=False)]
+    return d
+
+
 def sphera_similar_to_text(query_text: str, min_sim: float, years: int | None = None, topk: int = 50):
-    """Retorna [(event_id, sim, row)] com sim >= min_sim, usando apenas Sphera/Description."""
+    """Retorna [(event_id, sim, row)] com sim >= min_sim (cosine), usando Sphera/Description e filtros avançados."""
     if df_sph is None or E_sph is None or E_sph.size == 0:
         return []
     base = df_sph
     if years is not None:
         base = filter_sphera_by_date(base, years)
+    base = apply_advanced_filters(base)
 
     text_col = "Description" if "Description" in base.columns else base.columns[0]
     id_col = "Event ID" if "Event ID" in base.columns else ("EVENT_NUMBER" if "EVENT_NUMBER" in base.columns else None)
@@ -443,6 +499,9 @@ def sphera_similar_to_text(query_text: str, min_sim: float, years: int | None = 
     except Exception:
         E_view = E_sph
         base = df_sph
+        base = apply_advanced_filters(base)  # reaplicar se caiu no fallback
+        if years is not None:
+            base = filter_sphera_by_date(base, years)
 
     qv = encode_query(query_text)
     sims = E_view @ qv
@@ -458,6 +517,7 @@ def sphera_similar_to_text(query_text: str, min_sim: float, years: int | None = 
         evid = row.get(id_col, f"row{i}") if id_col else f"row{i}"
         out.append((evid, s, row))
     return out
+
 
 def match_from_dicts(query_text: str, lang: str, thr_ws: float, thr_prec: float, thr_cp: float, topk: int = 20):
     out = {"ws": [], "prec": [], "cp": []}
@@ -475,7 +535,7 @@ def match_from_dicts(query_text: str, lang: str, thr_ws: float, thr_prec: float,
             label = str(L_ws.iloc[i].get("label", L_ws.iloc[i].get("text", f"WS_{i}")))
             out["ws"].append((label, s))
 
-    # Prec
+    # Precursores
     E_pr, L_pr = select_prec_bank(lang)
     if E_pr is not None:
         qv = encode_query(query_text)
@@ -488,7 +548,7 @@ def match_from_dicts(query_text: str, lang: str, thr_ws: float, thr_prec: float,
             label = str(L_pr.iloc[i].get("label", L_pr.iloc[i].get("text", f"Prec_{i}")))
             out["prec"].append((label, s))
 
-    # CP (único banco)
+    # CP
     E_cp, L_cp = select_cp_bank()
     if E_cp is not None:
         qv = encode_query(query_text)
@@ -503,6 +563,7 @@ def match_from_dicts(query_text: str, lang: str, thr_ws: float, thr_prec: float,
 
     return out
 
+
 def get_upload_raw(max_chars: int) -> str:
     if not st.session_state.upld_texts:
         return ""
@@ -513,9 +574,12 @@ def get_upload_raw(max_chars: int) -> str:
         t = t[: max_chars - total]
         buf.append(t)
         total += len(t)
-    return "\n\n".join(buf).strip()
+    return "
+
+".join(buf).strip()
 
 # (NOVO) Parser simples para blocos do RAG misto
+
 def parse_blocks(blocks: list[str]):
     stats = {
         "Sphera": {"count": 0, "sims": []},
@@ -565,10 +629,14 @@ def render_interpretation_via_model(prompt: str, context_hint: str):
     msgs = [
         {"role": "system", "content": st.session_state.system_prompt},
         {"role": "user", "content": (
-            "Você é um analista de Segurança Operacional.\n"
-            "Escreva uma interpretação breve e objetiva dos resultados, com 3–6 bullet points,\n"
-            "indicando padrões, possíveis causas (WS/Precursores/CP) e sugestões práticas de follow-up.\n"
-            f"Contexto: {context_hint}\n"
+            "Você é um analista de Segurança Operacional.
+"
+            "Escreva uma interpretação breve e objetiva dos resultados, com 3–6 bullet points,
+"
+            "indicando padrões, possíveis causas (WS/Precursores/CP) e sugestões práticas de follow-up.
+"
+            f"Contexto: {context_hint}
+"
             f"Consulta do usuário: {prompt}"
         )}
     ]
@@ -583,9 +651,13 @@ def render_descriptive_summary_via_model(prompt: str, stats_text: str):
     msgs = [
         {"role": "system", "content": st.session_state.system_prompt},
         {"role": "user", "content": (
-            "Produza um resumo descritivo em 4–6 linhas sobre a busca realizada,\n"
-            "mencionando fontes com resultados, nível de similaridade observado e limitações,\n"
-            "usando tom técnico e claro.\n" + stats_text + f"\nPergunta do usuário: {prompt}"
+            "Produza um resumo descritivo em 4–6 linhas sobre a busca realizada,
+"
+            "mencionando fontes com resultados, nível de similaridade observado e limitações,
+"
+            "usando tom técnico e claro.
+" + stats_text + f"
+Pergunta do usuário: {prompt}"
         )}
     ]
     try:
@@ -606,26 +678,55 @@ def render_stats_section(title: str, per_source_stats: dict, extra_lines: list[s
         )
     if extra_lines:
         lines.extend(extra_lines)
-    st.markdown("\n".join(lines))
+    st.markdown("
+".join(lines))
 
+# ---------- Busca mista (com filtros aplicados à Sphera) ----------
 
-# Função principal de busca mista (mantida)
 def search_all(query: str) -> list[str]:
     """Embute a query e busca nos 4 conjuntos (Sphera/GoSee/Docs/Upload). Retorna blocos formatados."""
     qv = encode_query(query)
     blocks: list[tuple[float, str]] = []
 
-    # Sphera (apenas quando NÃO está em 'Somente Sphera', pois lá é calculado localmente)
+    # Sphera (apenas quando NÃO está em 'Somente Sphera') com filtros avançados
     if not only_sphera:
         if k_sph > 0 and E_sph is not None and df_sph is not None and len(df_sph) >= E_sph.shape[0]:
-            text_col = "Description" if "Description" in df_sph.columns else df_sph.columns[0]
-            id_col = "Event ID" if "Event ID" in df_sph.columns else ("EVENT_NUMBER" if "EVENT_NUMBER" in df_sph.columns else None)
-            hits = cos_topk(E_sph, qv, k=k_sph)
-            for i, s in hits:
-                row = df_sph.iloc[i]
+            base = df_sph
+            if apply_time_filter:
+                base = filter_sphera_by_date(base, years_back)
+            base = apply_advanced_filters(base)
+
+            text_col = "Description" if "Description" in base.columns else base.columns[0]
+            id_col = "Event ID" if "Event ID" in base.columns else ("EVENT_NUMBER" if "EVENT_NUMBER" in base.columns else None)
+
+            # alinhar E com base filtrada
+            try:
+                base_idx = base.index.to_numpy()
+                if np.issubdtype(base_idx.dtype, np.integer):
+                    E_view = E_sph[base_idx, :]
+                else:
+                    raise TypeError
+            except Exception:
+                E_view = E_sph
+                base = df_sph
+                if apply_time_filter:
+                    base = filter_sphera_by_date(base, years_back)
+                base = apply_advanced_filters(base)
+
+            sims = (E_view @ qv).astype(float)
+            ord_idx = np.argsort(-sims)
+            kept = 0
+            for i in ord_idx:
+                if kept >= k_sph: break
+                s = float(sims[i])
+                if s < thr_sphera:  # aplica limiar de SIMILARIDADE do cosseno
+                    continue
+                row = base.iloc[int(i)]
                 evid = row.get(id_col, f"row{i}") if id_col else f"row{i}"
                 snippet = str(row.get(text_col, ""))[:800]
-                blocks.append((s, f"[Sphera/{evid}] (sim={s:.3f})\n{snippet}"))
+                blocks.append((s, f"[Sphera/{evid}] (sim={s:.3f})
+{snippet}"))
+                kept += 1
 
     # GoSee
     if not only_sphera:
@@ -637,7 +738,8 @@ def search_all(query: str) -> list[str]:
                 row = df_gos.iloc[i]
                 gid = row.get(id_col, f"row{i}") if id_col else f"row{i}"
                 snippet = str(row.get(text_col, ""))[:800]
-                blocks.append((s, f"[GoSee/{gid}] (sim={s:.3f})\n{snippet}"))
+                blocks.append((s, f"[GoSee/{gid}] (sim={s:.3f})
+{snippet}"))
 
     # Docs (history)
     if not only_sphera:
@@ -647,7 +749,8 @@ def search_all(query: str) -> list[str]:
                 r = rows_his[i]
                 src = f"Docs/{r.get('source','?')}/{r.get('chunk_id', 0)}"
                 snippet = str(r.get("text", ""))[:800]
-                blocks.append((s, f"[{src}] (sim={s:.3f})\n{snippet}"))
+                blocks.append((s, f"[{src}] (sim={s:.3f})
+{snippet}"))
 
     # Upload
     if not only_sphera:
@@ -656,7 +759,8 @@ def search_all(query: str) -> list[str]:
             for i, s in hits:
                 meta = st.session_state.upld_meta[i]
                 snippet = st.session_state.upld_texts[i][:800]
-                blocks.append((s, f"[UPLOAD {meta['file']} / {meta['chunk_id']}] (sim={s:.3f})\n{snippet}"))
+                blocks.append((s, f"[UPLOAD {meta['file']} / {meta['chunk_id']}] (sim={s:.3f})
+{snippet}"))
 
     blocks.sort(key=lambda x: -x[0])
     return [b for _, b in blocks]
@@ -679,28 +783,34 @@ if prompt:
 
     # Opcional: injeta um recorte 'cru' do upload (máx N chars)
     up_raw = get_upload_raw(upload_raw_max)
-    lang = guess_lang((prompt or "") + "\n" + (up_raw or ""))
+    lang = guess_lang((prompt or "") + "
+" + (up_raw or ""))
 
     if only_sphera:
-        # -------- Fluxo "Somente Sphera": cálculo no app --------
+        # -------- Fluxo "Somente Sphera" --------
         query_text = up_raw if up_raw else prompt
         years = years_back if apply_time_filter else None
 
-        # 1) Eventos Sphera semelhantes (threshold aplicado AQUI)
+        # 1) Eventos Sphera semelhantes (limiar de **similaridade do cosseno**) 
         hits = sphera_similar_to_text(query_text, thr_sphera, years=years, topk=200)
         if hits:
-            md = ["**Eventos do Sphera (calculado no app, limiar aplicado)**\n",
-                  "| Event Id | Similaridade | Description |",
-                  "|---:|---:|---|"]
+            md = [
+                "**Eventos do Sphera (calculado no app, limiar de similaridade aplicado)**
+",
+                "| Event Id | Similaridade (cos) | Description |",
+                "|---:|---:|---|",
+            ]
             for evid, s, row in hits:
-                desc = str(row.get("Description", ""))[:4000].replace("\n", " ")
+                desc = str(row.get("Description", ""))[:4000].replace("
+", " ")
                 md.append(f"| {evid} | {s:.3f} | {desc} |")
-            tbl = "\n".join(md)
+            tbl = "
+".join(md)
             with st.chat_message("assistant"):
                 st.markdown(tbl)
             st.session_state.chat.append({"role": "assistant", "content": tbl})
         else:
-            msg = "Nenhum evento do Sphera encontrado com similaridade ≥ " + str(thr_sphera)
+            msg = "Nenhum evento do Sphera com **similaridade do cosseno** ≥ " + str(thr_sphera)
             with st.chat_message("assistant"):
                 st.markdown(msg)
             st.session_state.chat.append({"role": "assistant", "content": msg})
@@ -709,26 +819,30 @@ if prompt:
         dict_matches = match_from_dicts(query_text, lang, thr_ws, thr_prec, thr_cp, topk=50)
         md2 = []
         if dict_matches["ws"]:
-            md2.append("\n**WS (≥ limiar, calculado no app)**")
+            md2.append("
+**WS (≥ limiar, calculado no app)**")
             md2.append("| Rank | Termo | Similaridade |")
             md2.append("|---:|---|---:|")
             for r, (label, s) in enumerate(dict_matches["ws"], 1):
                 md2.append(f"| {r} | {label} | {s:.3f} |")
         if dict_matches["prec"]:
-            md2.append("\n**Precursores (≥ limiar, calculado no app)**")
+            md2.append("
+**Precursores (≥ limiar, calculado no app)**")
             md2.append("| Rank | Termo | Similaridade |")
             md2.append("|---:|---|---:|")
             for r, (label, s) in enumerate(dict_matches["prec"], 1):
                 md2.append(f"| {r} | {label} | {s:.3f} |")
         if dict_matches["cp"]:
-            md2.append("\n**CP (≥ limiar, calculado no app)**")
+            md2.append("
+**CP (≥ limiar, calculado no app)**")
             md2.append("| Rank | Fator | Similaridade |")
             md2.append("|---:|---|---:|")
             for r, (label, s) in enumerate(dict_matches["cp"], 1):
                 md2.append(f"| {r} | {label} | {s:.3f} |")
 
         if md2:
-            out2 = "\n".join(md2)
+            out2 = "
+".join(md2)
             with st.chat_message("assistant"):
                 st.markdown(out2)
             st.session_state.chat.append({"role": "assistant", "content": out2})
@@ -753,9 +867,8 @@ if prompt:
                 st.markdown(content)
         st.session_state.chat.append({"role": "assistant", "content": content})
 
-        # 4) SUMÁRIO (NOVO)
+        # 4) SUMÁRIO
         if show_summary:
-            # Estatísticas por fonte (aqui apenas Sphera presente)
             sims = [s for _, s, _ in hits] if hits else []
             per_source = {
                 "Sphera": {"count": len(sims), "sims": sims},
@@ -765,8 +878,10 @@ if prompt:
             }
             extra = [
                 f"- Filtro temporal: {'sem filtro' if years is None else f'últimos {years} anos'}",
-                f"- Limiar Sphera aplicado: {thr_sphera:.2f}",
+                f"- Limiar de similaridade aplicado: {thr_sphera:.2f}",
                 f"- Idioma inferido: {lang.upper()}",
+                (f"- Location: {', '.join(sph_loc_selected)}" if sph_loc_selected else "- Location: (sem filtro)"),
+                (f"- Description contém: '{sph_desc_contains}'" if sph_desc_contains else "- Description contém: (vazio)"),
                 f"- WS/Prec/CP retornados: {len(dict_matches['ws'])}/{len(dict_matches['prec'])}/{len(dict_matches['cp'])}",
             ]
             with st.chat_message("assistant"):
@@ -777,32 +892,37 @@ if prompt:
                     interp = render_interpretation_via_model(prompt, context_hint)
                 else:
                     interp = (
-                        "- Similaridades indicam proximidade textual com descrições Sphera;\n"
-                        "- Ajuste de limiar pode aumentar precisão (↑) ou abrangência (↓);\n"
-                        "- Considerar verificação manual dos top eventos listados;\n"
+                        "- Similaridades indicam proximidade textual com descrições Sphera;
+"
+                        "- Ajuste de limiar pode aumentar precisão (↑) ou abrangência (↓);
+"
+                        "- Verificar manualmente top eventos;
+"
                         "- Revisar WS/Precursores/CP com maior similaridade para ações preventivas."
                     )
-                st.markdown("**4. Interpretação dos resultados (exemplo típico)**\n" + interp)
+                st.markdown("**4. Interpretação dos resultados (exemplo típico)**
+" + interp)
 
-                # Resumo descritivo final
-                stats_text = "\n".join(extra)
+                stats_text = "
+".join(extra)
                 if summary_via_model:
                     desc = render_descriptive_summary_via_model(prompt, stats_text)
                 else:
                     desc = (
-                        "Foram retornados eventos do Sphera com similaridade acima do limiar definido, "
-                        "considerando o escopo temporal configurado. As correspondências em WS, "
-                        "Precursores e CP reforçam a leitura contextual e subsidiam decisões de controle "
-                        "e prevenção. Recomenda-se revisar os IDs com maior similaridade e planejar ações."
+                        "Foram retornados eventos do Sphera acima do limiar de similaridade definido, "
+                        "considerando o escopo e filtros aplicados. As correspondências em WS, "
+                        "Precursores e CP reforçam a leitura contextual e subsidiam decisões de risco."
                     )
-                st.markdown("**Resumo descritivo da consulta**\n" + desc)
+                st.markdown("**Resumo descritivo da consulta**
+" + desc)
 
     else:
-        # -------- Fluxo RAG “clássico” (mistura Sphera/GoSee/Docs/Upload) --------
+        # -------- Fluxo RAG “clássico” --------
         blocks = search_all(prompt)
         up_raw = get_upload_raw(upload_raw_max)
         if up_raw:
-            blocks = [f"[UPLOAD_RAW]\n{up_raw}"] + blocks
+            blocks = [f"[UPLOAD_RAW]
+{up_raw}"] + blocks
 
         msgs = [{"role": "system", "content": st.session_state.system_prompt}]
         if use_catalog and os.path.exists(DATASETS_CONTEXT_FILE):
@@ -813,8 +933,11 @@ if prompt:
                 pass
 
         if blocks:
-            ctx = "\n\n".join(blocks)
-            msgs.append({"role": "user", "content": f"CONTEXTOS (HIST + UPLOAD):\n{ctx}"})
+            ctx = "
+
+".join(blocks)
+            msgs.append({"role": "user", "content": f"CONTEXTOS (HIST + UPLOAD):
+{ctx}"})
             msgs.append({"role": "user", "content": f"PERGUNTA: {prompt}"})
         else:
             msgs.append({"role": "user", "content": prompt})
@@ -829,21 +952,21 @@ if prompt:
                 st.markdown(content)
         st.session_state.chat.append({"role": "assistant", "content": content})
 
-        # 4) SUMÁRIO (NOVO) — para o fluxo misto
+        # SUMÁRIO
         if show_summary:
-            # Estatísticas por fonte a partir dos blocos formatados
             blocks_wo_raw = [b for b in blocks if not b.startswith("[UPLOAD_RAW]")]
             per_source = parse_blocks(blocks_wo_raw)
             extra = [
                 f"- Top-K: Sphera={k_sph}, GoSee={k_gos}, Docs={k_his}, Upload={k_upl}",
                 f"- Limiar WS/Prec/CP: {thr_ws:.2f}/{thr_prec:.2f}/{thr_cp:.2f}",
                 f"- Idioma inferido: {lang.upper()}",
+                (f"- Location: {', '.join(sph_loc_selected)}" if sph_loc_selected else "- Location: (sem filtro)"),
+                (f"- Description contém: '{sph_desc_contains}'" if sph_desc_contains else "- Description contém: (vazio)"),
                 f"- Uploads indexados: {len(st.session_state.upld_texts)} chunks" if st.session_state.upld_texts else "- Sem uploads no contexto",
             ]
             with st.chat_message("assistant"):
                 render_stats_section("Estatísticas principais geradas", per_source, extra)
                 render_visual_layout_example()
-                # Interpretação e resumo descritivo
                 if summary_via_model:
                     context_hint = (
                         f"Sphera n={per_source['Sphera']['count']} avg={_agg_sims(per_source['Sphera']['sims'])['avg']}; "
@@ -853,23 +976,29 @@ if prompt:
                     interp = render_interpretation_via_model(prompt, context_hint)
                 else:
                     interp = (
-                        "- Resultados agregam múltiplas fontes com base em similaridade;\n"
-                        "- Priorize itens com maior sim e origem Sphera;\n"
-                        "- Use dicionários WS/Prec/CP como apoio a ações corretivas/preventivas;\n"
-                        "- Considere ajustar Top-K/limiares para refinar o escopo."
+                        "- Resultados agregam múltiplas fontes com base em similaridade;
+"
+                        "- Priorize itens com maior similaridade do cosseno e origem Sphera;
+"
+                        "- Use WS/Prec/CP como apoio a ações corretivas/preventivas;
+"
+                        "- Ajuste Top-K/limiares para refinar o escopo."
                     )
-                st.markdown("**4. Interpretação dos resultados (exemplo típico)**\n" + interp)
+                st.markdown("**4. Interpretação dos resultados (exemplo típico)**
+" + interp)
 
-                stats_text = "\n".join(extra)
+                stats_text = "
+".join(extra)
                 if summary_via_model:
                     desc = render_descriptive_summary_via_model(prompt, stats_text)
                 else:
                     desc = (
-                        "A consulta integrou Sphera, GoSee, Docs e Uploads segundo os Top-K definidos. "
-                        "As similaridades mais altas indicam proximidade textual e relevância operacional. "
-                        "Ajustes em limiares e Top-K podem ampliar ou reduzir a abrangência, conforme a necessidade."
+                        "A consulta integrou Sphera, GoSee, Docs e Uploads segundo os Top-K e filtros definidos. "
+                        "As similaridades mais altas (cosseno) indicam proximidade textual e relevância operacional. "
+                        "Ajustes de limiar/Top-K podem ampliar ou reduzir a abrangência."
                     )
-                st.markdown("**Resumo descritivo da consulta**\n" + desc)
+                st.markdown("**Resumo descritivo da consulta**
+" + desc)
 
 # ---------- Painel / Diagnóstico ----------
 debug = st.sidebar.checkbox("Mostrar painel de diagnóstico", False)
