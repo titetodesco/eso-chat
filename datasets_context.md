@@ -9,8 +9,8 @@ catalog:
       fields:
         - name: "EVENT_NUMBER"
           description: "Identificador único do evento."
-        - name: "FPSO"
-          description: "Unidade (por exemplo, 'P-36' ou 'Espírito Santo')."
+        - name: "LOCATION"
+          description: "Unidade (por exemplo, 'PTC/U/DB...' ou 'Espírito Santo')."
         - name: "EVENT_DATE"
           description: "Data do evento."
         - name: "AREA"
@@ -52,10 +52,10 @@ catalog:
       key_columns: []
       fields:
         - name: "HTO"
-          description: "Dimensão Humano / Tecnologia / Organização."
-        - name: "Precursor"
+          description: "Dimensão Humano / Tecnico/ Organizacional"
+        - name: "Precursor_PT"
           description: "Nome do precursor (PT)."
-        - name: "EN"
+        - name: "Precursor_EN"
           description: "Nome do precursor (EN) — se existir."
 
     - name: taxonomy_cp
@@ -84,7 +84,7 @@ catalog:
   csvs:
     - name: ws_prec_edges
       path: "data/analytics/ws_precursors_edges.csv"
-      description: "Relação WeakSignal → Precursor com HTO."
+      description: "Relação WeakSignal → Precursor."
       columns_any_order: ["HTO", "WeakSignal", "Precursor"]
 
     - name: ws_prec_edges_alt
