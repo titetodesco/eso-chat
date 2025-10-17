@@ -695,8 +695,7 @@ def search_all(query: str) -> list[str]:
                 row = base.iloc[int(i)]
                 evid = row.get(id_col, f"row{i}") if id_col else f"row{i}"
                 snippet = str(row.get(text_col, ""))[:800]
-                blocks.append((s, f"[Sphera/{evid}] (sim={s:.3f})
-{snippet}"))
+                blocks.append((s, f"[Sphera/{evid}] (sim={s:.3f}){snippet}"))
                 kept += 1
 
     # GoSee
