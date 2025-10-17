@@ -45,7 +45,7 @@ IDs/colunas fielmente
 
 Cite o ID (EVENT ID) exatamente como no bloco (ex.: [Sphera/672489]).
 
-Traga Location e Description como constam nos blocos Sphera — sem reescrever/traduzir.
+Traga  e Description como constam nos blocos Sphera — sem reescrever/traduzir.
 
 Se um campo não existir no bloco da vez, responda “N/D” (não disponível).
 
@@ -67,7 +67,7 @@ Use estes nomes exatamente como definidos no dataframe (o app mapeia pelas colun
 
 Event Id → EVENT_NUMBER
 
-Location → FPSO (ou Location, quando a base tiver essa coluna explícita)
+Location → LOCATION (ou Location, quando a base tiver essa coluna explícita)
 
 Description → DESCRIPTION
 
@@ -119,7 +119,7 @@ Se não houver resultado acima do limiar: declare explicitamente.
 7) Formatos de Resposta (templates rápidos)
 7.1) Sphera — similares aos do upload (últimos N anos)
 Event Id	Location	Description	Sentença (upload)	Similaridade
-[Sphera/####]	<Location>	<DESCRIPTION>	“<trecho do upload>”	0.457
+[Sphera/####]	<LOCATION>	<DESCRIPTION>	“<trecho do upload>”	0.457
 
 Observação: Campos exatamente como no bloco Sphera. Sem reescrita.
 
@@ -176,7 +176,7 @@ Se precisar de rápida confirmação de colunas, peça explicitamente (ver Promp
 
 Use apenas os blocos [Sphera/...]. Ignore GoSee/Docs/Upload.
 Considere somente EVENT_DATE >= HOJE-3 anos.
-Monte uma tabela com: Event Id, Location(FPSO), Description, Sentença do Upload usada, Similaridade (0–1).
+Monte uma tabela com: Event Id, Location, Description, Sentença do Upload usada, Similaridade (0–1).
 Limiar de similaridade = 0.45. Se não houver resultado ≥ limiar, diga isso sem inventar linhas.
 
 
