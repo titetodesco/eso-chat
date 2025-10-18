@@ -103,6 +103,122 @@ Sempre mostre a similaridade no intervalo [0,0–1,0] com 3 casas decimais.
 Use exclusivamente os itens que vieram nos blocos [WS_MATCH], [PREC_MATCH], [CP_MATCH].
 
 Cada linha deve conter: ID/código, rótulo, similaridade, e trecho do upload que justifica (quando disponível no bloco).
+Formato Padrão de Saída — WS / Precursores / CP
+
+Sempre apresente os resultados em seções separadas e em tabelas Markdown, sem texto intercalado entre as tabelas. Siga exatamente o formato:
+
+Weak Signals (WS)
+
+Título: **WS (≥ limiar, calculado no app)**
+
+Tabela (sem colunas extras, 3 casas decimais na similaridade):
+
+| Rank | Termo | Similaridade |
+|---:|---|---:|
+| 1 | <termo_1> | 0.524 |
+| 2 | <termo_2> | 0.484 |
+
+
+Se não houver itens ≥ limiar: escrever apenas Nenhum WS ≥ limiar.
+
+Precursores
+
+Título: **Precursores (≥ limiar, calculado no app)**
+
+Tabela:
+
+| Rank | Termo | Similaridade |
+|---:|---|---:|
+| 1 | <precursor_1> | 0.481 |
+| 2 | <precursor_2> | 0.460 |
+
+
+Se vazio: Nenhum Precursor ≥ limiar.
+
+Fatores CP
+
+Título: **CP (≥ limiar, calculado no app)**
+
+Tabela:
+
+| Rank | Fator | Similaridade |
+|---:|---|---:|
+| 1 | <fator_cp_1> | 0.425 |
+| 2 | <fator_cp_2> | 0.412 |
+
+
+Se vazio: Nenhum CP ≥ limiar.
+
+Regras obrigatórias
+
+Não misturar as três categorias.
+
+Não inserir parágrafos entre as tabelas.
+
+Cada linha da tabela deve terminar com uma quebra de linha real.
+
+Similaridade sempre com 3 casas decimais.
+
+Máximo de 50 linhas por tabela (ou menos, se Top-K menor).
+
+2) Lembrete curto para injetar a cada consulta (no app)
+
+Antes de chamar o modelo, adicione este msgs.append(...) (ou atualize o que você já injeta hoje):
+
+msgs.append({
+  "role": "user",
+  "content": (
+    "Formate a saída em três seções separadas com tabelas Markdown, sem texto entre elas, "
+    "seguindo exatamente o padrão do contexto: "
+    "1) **WS (≥ limiar, calculado no app)**, 2) **Precursores (≥ limiar, calculado no app)**, "
+    "3) **CP (≥ limiar, calculado no app)**. "
+    "Use cabeçalho de tabela e 3 casas decimais na similaridade. "
+    "Se uma categoria não tiver itens, escreva ‘Nenhum <categoria> ≥ limiar.’"
+  )
+})
+
+
+Esse lembrete curto reforça o que já estará no contexto_eso_chat.md. Juntos, eles reduzem quase a zero as saídas coladas/sem quebra.
+
+3) (Opcional, mas recomendo) Ajuste mínimo no app para tabelas calculadas no app
+
+Quando você monta as tabelas de WS/Precursores/CP dentro do app (não via modelo), garanta:
+
+Uma linha em branco antes de cada tabela.
+
+Cabeçalho + separador + cada linha com \n.
+
+Ex.: (WS)
+
+md2_lines = []
+if dict_matches["ws"]:
+    md2_lines.append("")  # linha em branco antes da tabela
+    md2_lines.append("**WS (≥ limiar, calculado no app)**")
+    md2_lines.append("| Rank | Termo | Similaridade |")
+    md2_lines.append("|---:|---|---:|")
+    for r_idx, (label, s) in enumerate(dict_matches["ws"], 1):
+        md2_lines.append(f"| {r_idx} | {label} | {s:.3f} |")
+else:
+    md2_lines.append("")
+    md2_lines.append("**WS (≥ limiar, calculado no app)**")
+    md2_lines.append("Nenhum WS ≥ limiar.")
+
+
+Repita o mesmo padrão para Precursores e CP.
+
+Isso evita exatamente o problema que você mostrou (tudo em uma linha). O colapso normalmente acontece quando falta a linha em branco antes da tabela ou quando as quebras de linha foram perdidas na junção da string.
+
+Dica de validação rápida
+
+Teste colando “qualquer tabela” num st.markdown("...") com:
+
+uma linha em branco antes,
+
+\n ao final de cada linha, e
+
+o separador |---:|---|---:|.
+
+Se ainda colapsar, é porque a string foi passada sem \n reais (por exemplo, transformada inadvertidamente). Fixe onde você faz o "\n".join(...).
 
 Não invente rótulos nem IDs.
 
