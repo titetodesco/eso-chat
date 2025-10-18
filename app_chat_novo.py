@@ -25,6 +25,63 @@ from datetime import datetime, timedelta
 CONTEXT_MD_REL_PATH = Path(__file__).parent / "docs" / "contexto_eso_chat.md"
 DATASETS_CONTEXT_FILE = "datasets_context.md"  # opcional
 
+from pathlib import Path
+import re
+
+PROMPTS_MD_PATH = Path("data/prompts/prompts.md")
+
+@st.cache_data(show_spinner=False)
+def load_prompts_md(md_path: Path):
+    """
+    Lê data/prompts/prompts.md e retorna:
+    {
+      "Texto":  [{"title": "1) ...", "body": "..."} , ...],
+      "Upload": [{"title": "1) ...", "body": "..."} , ...]
+    }
+    Regras:
+      - Seções: '## Texto' e '## Upload'
+      - Items: '### <n>) <título>' seguidos do corpo até o próximo '###' ou '##'
+    """
+    if not md_path.exists():
+        return {"Texto": [], "Upload": []}
+
+    raw = md_path.read_text(encoding="utf-8")
+
+    # Quebra por grandes seções
+    sections = re.split(r"(?m)^##\s+", raw)
+    data = {"Texto": [], "Upload": []}
+    for sec in sections:
+        sec = sec.strip()
+        if not sec:
+            continue
+        # primeira linha = nome da seção (Texto/Upload)
+        first_line, _, rest = sec.partition("\n")
+        section_name = first_line.strip()
+        if section_name not in ("Texto", "Upload"):
+            continue
+
+        # Itens "###"
+        parts = re.split(r"(?m)^###\s+", rest)
+        for p in parts:
+            p = p.strip()
+            if not p:
+                continue
+            title_line, _, body = p.partition("\n")
+            title_line = title_line.strip()
+            # limpa numeração, mas mantém no título exibido
+            title = title_line
+            body = body.strip()
+            data[section_name].append({"title": title, "body": body})
+
+    # Ordena por prefixo numérico se houver (1), 2), etc.)
+    def _key(x):
+        m = re.match(r"^(\d+)\)", x["title"])
+        return int(m.group(1)) if m else 9999
+    for k in data:
+        data[k].sort(key=_key)
+    return data
+
+
 @st.cache_data(show_spinner=False)
 def load_file_text(p: Path) -> str:
     try:
@@ -49,6 +106,32 @@ if "system_prompt" not in st.session_state:
 if st.sidebar.button("Recarregar contexto (.md)"):
     st.session_state.system_prompt = build_system_prompt()
     st.sidebar.success("Contexto recarregado.")
+    
+# ===== Assistente de Prompts =====
+st.sidebar.subheader("Assistente de Prompts")
+prompts_bank = load_prompts_md(PROMPTS_MD_PATH)
+
+# Escolha do tipo
+prompt_type = st.sidebar.selectbox("Tipo de análise", options=["Texto", "Upload"], index=0)
+
+# Opções de prompt para o tipo escolhido
+titles = [it["title"] for it in prompts_bank.get(prompt_type, [])]
+if not titles:
+    st.sidebar.info("Nenhum prompt encontrado em {} (seção {}).".format(PROMPTS_MD_PATH, prompt_type))
+else:
+    selected_title = st.sidebar.selectbox("Modelo de prompt", options=titles, index=0, key="prompt_title_{}".format(prompt_type))
+    # Recupera corpo
+    selected = next((it for it in prompts_bank[prompt_type] if it["title"] == selected_title), None)
+    body = selected["body"] if selected else ""
+
+    # Coloca o corpo do prompt no rascunho (session_state)
+    if "draft_prompt" not in st.session_state:
+        st.session_state.draft_prompt = ""
+
+    if st.sidebar.button("Carregar no rascunho", use_container_width=True):
+        st.session_state["draft_prompt"] = body
+        st.sidebar.success("Modelo carregado no rascunho (edite antes de enviar).")
+        st.rerun()
 
 # ---------- Config básica ----------
 st.set_page_config(page_title="ESO • CHAT (Embeddings)", page_icon="💬", layout="wide")
@@ -362,6 +445,7 @@ def get_sphera_location_col(df: pd.DataFrame) -> str | None:
             return c
     return None
 
+
 # ---------- Sidebar ----------
 st.sidebar.header("Configurações")
 with st.sidebar.expander("Modelo de Resposta", expanded=False):
@@ -645,19 +729,6 @@ def render_interpretation_via_model(prompt: str, context_hint: str):
         return f"[Interpretação automática indisponível] {e}"
 
 
-
-def _send_to_chat():
-    text_to_send = (st.session_state.get("draft_prompt") or "").strip()
-    if not text_to_send:
-        return
-    # empurra a mensagem para o histórico como 'user'
-    if "chat" not in st.session_state:
-        st.session_state.chat = []
-    st.session_state.chat.append({"role": "user", "content": text_to_send})
-    # sinaliza para o pipeline processar após o rerun
-    st.session_state["pending_user_prompt"] = text_to_send
-    # limpa o rascunho e reroda
-    st.session_state["draft_prompt"] = ""
 def render_descriptive_summary_via_model(prompt: str, stats_text: str):
     msgs = [
         {"role": "system", "content": st.session_state.system_prompt},
@@ -767,6 +838,21 @@ def search_all(query: str) -> list[str]:
     blocks.sort(key=lambda x: -x[0])
     return [b for _, b in blocks]
 
+
+def _send_prompt_to_chat():
+    text_to_send = (st.session_state.get("draft_prompt") or "").strip()
+    if not text_to_send:
+        return
+    # adiciona ao histórico como 'user'
+    if "chat" not in st.session_state:
+        st.session_state.chat = []
+    st.session_state.chat.append({"role": "user", "content": text_to_send})
+    # sinaliza para o pipeline do chat processar após o rerun
+    st.session_state["pending_user_prompt"] = text_to_send
+    # limpa o rascunho
+    st.session_state["draft_prompt"] = ""
+    st.rerun()
+
 # ---------- UI ----------
 st.title("ESO • CHAT — HIST + UPLD (Embeddings preferencial) + Dicionários PT/EN")
 st.caption("RAG local (Sphera / GoSee / Docs / Upload) + WS/Precursores/CP com seleção automática de idioma.")
@@ -865,7 +951,6 @@ if prompt:
               "Se a coluna não existir nos blocos, retornar 'N/D'."
           )
         })
-
 
         with st.chat_message("assistant"):
             with st.spinner("Consultando o modelo (análise explicativa)…"):
@@ -993,6 +1078,20 @@ if prompt:
                         "Ajustes de limiar/Top-K podem ampliar ou reduzir a abrangência."
                     )
                 st.markdown("**Resumo descritivo da consulta**" + desc)
+
+st.markdown("### 📝 Rascunho do prompt (edite antes de enviar)")
+st.caption("Dica: cole o seu texto do evento onde indicado; se for usar upload, envie os arquivos na barra lateral antes de enviar.")
+
+draft = st.text_area("Conteúdo do prompt", height=220, key="draft_prompt")
+
+c_a, c_b, c_c = st.columns([1,1,3])
+with c_a:
+    st.button("Enviar para o chat", use_container_width=True, on_click=_send_prompt_to_chat)
+with c_b:
+    if st.button("Limpar rascunho", use_container_width=True):
+        st.session_state["draft_prompt"] = ""
+        st.rerun()
+
 
 # ---------- Painel / Diagnóstico ----------
 debug = st.sidebar.checkbox("Mostrar painel de diagnóstico", False)
