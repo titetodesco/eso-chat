@@ -336,6 +336,32 @@ def encode_query(q: str) -> np.ndarray:
     v /= (np.linalg.norm(v) + 1e-9)
     return v
 
+def get_sphera_location_col(df: pd.DataFrame) -> str | None:
+    """
+    Retorna a coluna correta para 'Location' na Sphera, por ordem de preferência:
+    1) LOCATION
+    2) FPSO
+    3) Location
+    4) FPSO/Unidade
+    5) Unidade
+    (Só cai para AREA/Setor se nada acima existir — e avisa no UI.)
+    """
+    if df is None:
+        return None
+    preferred = ["LOCATION", "FPSO", "Location", "FPSO/Unidade", "Unidade"]
+    fallback  = ["AREA", "Area", "Setor"]
+    for c in preferred:
+        if c in df.columns:
+            return c
+    for c in fallback:
+        if c in df.columns:
+            st.warning(
+                "⚠️ Usando '{}' como fallback de Location (colunas LOCATION/FPSO/Location ausentes)."
+                .format(c)
+            )
+            return c
+    return None
+
 # ---------- Sidebar ----------
 st.sidebar.header("Configurações")
 with st.sidebar.expander("Modelo de Resposta", expanded=False):
@@ -454,32 +480,6 @@ def apply_advanced_filters(base: pd.DataFrame) -> pd.DataFrame:
         if desc_col:
             d = d[d[desc_col].astype(str).str.contains(pat, case=False, na=False)]
     return d
-
-def get_sphera_location_col(df: pd.DataFrame) -> str | None:
-    """
-    Retorna a coluna correta para 'Location' na Sphera, por ordem de preferência:
-    1) LOCATION
-    2) FPSO
-    3) Location
-    4) FPSO/Unidade
-    5) Unidade
-    (Só cai para AREA/Setor se nada acima existir — e avisa no UI.)
-    """
-    if df is None:
-        return None
-    preferred = ["LOCATION", "FPSO", "Location", "FPSO/Unidade", "Unidade"]
-    fallback  = ["AREA", "Area", "Setor"]
-    for c in preferred:
-        if c in df.columns:
-            return c
-    for c in fallback:
-        if c in df.columns:
-            st.warning(
-                "⚠️ Usando '{}' como fallback de Location (colunas LOCATION/FPSO/Location ausentes)."
-                .format(c)
-            )
-            return c
-    return None
 
 def sphera_similar_to_text(query_text: str, min_sim: float, years: int | None = None, topk: int = 50):
     """Retorna [(event_id, sim, row)] com sim >= min_sim (cosine), usando Sphera/Description e filtros avançados."""
