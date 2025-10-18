@@ -935,17 +935,17 @@ if prompt:
             st.session_state.chat.append({"role": "assistant", "content": out2})
 
         md2_lines = []
-            if dict_matches["ws"]:
-                md2_lines.append("")  # linha em branco antes da tabela
-                md2_lines.append("**WS (≥ limiar, calculado no app)**")
-                md2_lines.append("| Rank | Termo | Similaridade |")
-                md2_lines.append("|---:|---|---:|")
-                for r_idx, (label, s) in enumerate(dict_matches["ws"], 1):
-                    md2_lines.append(f"| {r_idx} | {label} | {s:.3f} |")
-            else:
-                md2_lines.append("")
-                md2_lines.append("**WS (≥ limiar, calculado no app)**")
-                md2_lines.append("Nenhum WS ≥ limiar.")
+        if dict_matches["ws"]:
+            md2_lines.append("")  # linha em branco antes da tabela
+            md2_lines.append("**WS (≥ limiar, calculado no app)**")
+            md2_lines.append("| Rank | Termo | Similaridade |")
+            md2_lines.append("|---:|---|---:|")
+            for r_idx, (label, s) in enumerate(dict_matches["ws"], 1):
+                md2_lines.append(f"| {r_idx} | {label} | {s:.3f} |")
+        else:
+            md2_lines.append("")
+            md2_lines.append("**WS (≥ limiar, calculado no app)**")
+            md2_lines.append("Nenhum WS ≥ limiar.")
 
         
         # 3) Comentário do LLM sobre os resultados (sem buscar fora)
