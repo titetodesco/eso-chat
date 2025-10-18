@@ -652,6 +652,35 @@ def match_from_dicts(query_text: str, lang: str, thr_ws: float, thr_prec: float,
     return out
 
 
+
+def build_dict_matches_from_hits(hits, lang: str, thr_ws: float, thr_prec: float, thr_cp: float, topk: int = 50):
+    """
+    Constrói WS/Precursores/CP usando EMBEDDINGS contra os DICIONÁRIOS,
+    tendo como texto de entrada a concatenação das Descriptions dos eventos Sphera recuperados.
+    """
+    try:
+        if not hits:
+            return {"ws": [], "prec": [], "cp": []}
+        texts = []
+        for _, _, row in hits:
+            desc = str(row.get("Description", row.get("DESCRIPTION", "")))
+            if desc:
+                texts.append(desc)
+        if not texts:
+            return {"ws": [], "prec": [], "cp": []}
+        concat_desc = " \n".join(texts)
+        if len(concat_desc) > 200_000:
+            concat_desc = concat_desc[:200_000]
+        return match_from_dicts(concat_desc, lang, thr_ws, thr_prec, thr_cp, topk=topk)
+    except Exception as e:
+        try:
+            import streamlit as st
+            st.warning(f"[WS/Prec/CP] Falha ao montar dicionários a partir dos hits: {e}")
+        except Exception:
+            pass
+        return {"ws": [], "prec": [], "cp": []}
+
+
 def get_upload_raw(max_chars: int) -> str:
     if not st.session_state.upld_texts:
         return ""
@@ -723,7 +752,8 @@ def render_interpretation_via_model(prompt: str, context_hint: str):
         )}
     ]
     try:
-        resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
+        msgs.append({"role": "user", "content": "Importante: NÃO gere novas listas de Weak Signals, Precursores ou Fatores CP. Essas tabelas já foram calculadas pelo app com base em embeddings dos dicionários (WS, Precursores, CP). Apenas interprete e comente os resultados apresentados, sem alterar ou criar novos termos."})
+resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
         return resp.get("message", {}).get("content", "").strip()
     except Exception as e:
         return f"[Interpretação automática indisponível] {e}"
@@ -907,7 +937,7 @@ if prompt:
             st.session_state.chat.append({"role": "assistant", "content": msg})
 
         # 2) Dicionários (WS / Precursores / CP)
-        dict_matches = match_from_dicts(query_text, lang, thr_ws, thr_prec, thr_cp, topk=50)
+        dict_matches = build_dict_matches_from_hits(hits, lang, thr_ws, thr_prec, thr_cp, topk=50)
         md2 = []
         # WS
         if dict_matches["ws"]:
