@@ -336,32 +336,6 @@ def encode_query(q: str) -> np.ndarray:
     v /= (np.linalg.norm(v) + 1e-9)
     return v
 
-def get_sphera_location_col(df: pd.DataFrame) -> str | None:
-    """
-    Retorna a coluna correta para 'Location' na Sphera, por ordem de preferência:
-    1) LOCATION
-    2) FPSO
-    3) Location
-    4) FPSO/Unidade
-    5) Unidade
-    (Só cai para AREA/Setor se nada acima existir — e avisa no UI.)
-    """
-    if df is None:
-        return None
-    preferred = ["LOCATION", "FPSO", "Location", "FPSO/Unidade", "Unidade"]
-    fallback  = ["AREA", "Area", "Setor"]
-    for c in preferred:
-        if c in df.columns:
-            return c
-    for c in fallback:
-        if c in df.columns:
-            st.warning(
-                "⚠️ Usando '{}' como fallback de Location (colunas LOCATION/FPSO/Location ausentes)."
-                .format(c)
-            )
-            return c
-    return None
-
 # ---------- Sidebar ----------
 st.sidebar.header("Configurações")
 with st.sidebar.expander("Modelo de Resposta", expanded=False):
@@ -402,6 +376,32 @@ _sph_has_desc = False
 desc_candidates = ["Description", "DESCRIPTION"]
 _sph_desc_col = next((c for c in desc_candidates if c in (df_sph.columns if df_sph is not None else [])), None)
 if df_sph is not None:
+def get_sphera_location_col(df: pd.DataFrame) -> str | None:
+    """
+    Retorna a coluna correta para 'Location' na Sphera, por ordem de preferência:
+    1) LOCATION
+    2) FPSO
+    3) Location
+    4) FPSO/Unidade
+    5) Unidade
+    (Só cai para AREA/Setor se nada acima existir — e avisa no UI.)
+    """
+    if df is None:
+        return None
+    preferred = ["LOCATION", "FPSO", "Location", "FPSO/Unidade", "Unidade"]
+    fallback  = ["AREA", "Area", "Setor"]
+    for c in preferred:
+        if c in df.columns:
+            return c
+    for c in fallback:
+        if c in df.columns:
+            st.warning(
+                "⚠️ Usando '{}' como fallback de Location (colunas LOCATION/FPSO/Location ausentes)."
+                .format(c)
+            )
+            return c
+    return None
+
     _sph_loc_col = get_sphera_location_col(df_sph)  # << aqui
     if _sph_loc_col:
         _sph_loc_options = sorted([str(x) for x in df_sph[_sph_loc_col].dropna().unique()])[:500]
