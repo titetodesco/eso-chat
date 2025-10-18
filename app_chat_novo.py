@@ -129,9 +129,9 @@ else:
         st.session_state.draft_prompt = ""
 
     if st.sidebar.button("Carregar no rascunho", use_container_width=True):
-        st.session_state.draft_prompt = body
+        st.session_state["draft_prompt"] = body
         st.sidebar.success("Modelo carregado no rascunho (edite antes de enviar).")
-
+        st.rerun()
 # ---------- Config básica ----------
 st.set_page_config(page_title="ESO • CHAT (Embeddings)", page_icon="💬", layout="wide")
 
@@ -1064,7 +1064,7 @@ if prompt:
 st.markdown("### 📝 Rascunho do prompt (edite antes de enviar)")
 st.caption("Dica: cole o seu texto do evento onde indicado; se for usar upload, envie os arquivos na barra lateral antes de enviar.")
 
-draft = st.text_area("Conteúdo do prompt", value=st.session_state.get("draft_prompt", ""), height=220, key="draft_editor")
+draft = st.text_area("Conteúdo do prompt", value=st.session_state.get("draft_prompt", ""), height=220, key="draft_prompt")
 
 c_a, c_b, c_c = st.columns([1,1,3])
 with c_a:
@@ -1082,10 +1082,8 @@ with c_a:
             st.session_state.draft_prompt = ""  # opcional: limpar após envio
 with c_b:
     if st.button("Limpar rascunho", use_container_width=True):
-        st.session_state.draft_prompt = ""
-        st.experimental_rerun()
-
-
+        st.session_state["draft_prompt"] = ""
+        st.rerun()
 # ---------- Painel / Diagnóstico ----------
 debug = st.sidebar.checkbox("Mostrar painel de diagnóstico", False)
 
