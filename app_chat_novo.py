@@ -909,30 +909,63 @@ if prompt:
         # 2) Dicionários (WS / Precursores / CP)
         dict_matches = match_from_dicts(query_text, lang, thr_ws, thr_prec, thr_cp, topk=50)
         md2 = []
+        # WS
         if dict_matches["ws"]:
-            md2.append("**WS (≥ limiar, calculado no app)**")
-            md2.append("| Rank | Termo | Similaridade |")
-            md2.append("|---:|---|---:|")
+            md2 += [
+                "",  # linha em branco antes da tabela
+                "**WS (≥ limiar, calculado no app)**",
+                "| Rank | Termo | Similaridade |",
+                "|---:|---|---:|",
+            ]
             for r, (label, s) in enumerate(dict_matches["ws"], 1):
                 md2.append(f"| {r} | {label} | {s:.3f} |")
+        else:
+            md2 += [
+                "",
+                "**WS (≥ limiar, calculado no app)**",
+                "Nenhum WS ≥ limiar.",
+            ]
+        
+        # Precursores
         if dict_matches["prec"]:
-            md2.append("**Precursores (≥ limiar, calculado no app)**")
-            md2.append("| Rank | Termo | Similaridade |")
-            md2.append("|---:|---|---:|")
+            md2 += [
+                "",
+                "**Precursores (≥ limiar, calculado no app)**",
+                "| Rank | Termo | Similaridade |",
+                "|---:|---|---:|",
+            ]
             for r, (label, s) in enumerate(dict_matches["prec"], 1):
                 md2.append(f"| {r} | {label} | {s:.3f} |")
+        else:
+            md2 += [
+                "",
+                "**Precursores (≥ limiar, calculado no app)**",
+                "Nenhum Precursor ≥ limiar.",
+            ]
+        
+        # CP
         if dict_matches["cp"]:
-            md2.append("**CP (≥ limiar, calculado no app)**")
-            md2.append("| Rank | Fator | Similaridade |")
-            md2.append("|---:|---|---:|")
+            md2 += [
+                "",
+                "**CP (≥ limiar, calculado no app)**",
+                "| Rank | Fator | Similaridade |",
+                "|---:|---|---:|",
+            ]
             for r, (label, s) in enumerate(dict_matches["cp"], 1):
                 md2.append(f"| {r} | {label} | {s:.3f} |")
-
+        else:
+            md2 += [
+                "",
+                "**CP (≥ limiar, calculado no app)**",
+                "Nenhum CP ≥ limiar.",
+            ]
+        
         if md2:
-            out2 = "".join(md2)
+            out2 = "\n".join(md2)        # ← AGORA COM QUEBRAS
             with st.chat_message("assistant"):
                 st.markdown(out2)
             st.session_state.chat.append({"role": "assistant", "content": out2})
+
 
         md2_lines = []
         if dict_matches["ws"]:
