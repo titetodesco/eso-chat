@@ -1145,10 +1145,10 @@ draft = st.text_area("Conteúdo do prompt", height=220, key="draft_prompt")
 c_a, c_b, c_c = st.columns([1,1,3])
 with c_a:
     st.button("Enviar para o chat", use_container_width=True, on_click=_send_prompt_to_chat)
-with c_b:
-    if st.button("Limpar rascunho", use_container_width=True):
-        st.session_state["draft_prompt"] = ""
-        st.rerun()
+#with c_b:
+#    if st.button("Limpar rascunho", use_container_width=True):
+#        st.session_state["draft_prompt"] = ""
+#        st.rerun()
 
 
 # ---------- Painel / Diagnóstico ----------
