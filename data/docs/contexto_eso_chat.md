@@ -13,6 +13,7 @@ Evitar alucinações: trabalhe apenas com as fontes explicitamente fornecidas ne
 
 Padrão de idioma: PT-BR. Mantenha o tom técnico, direto e rastreável.
 
+Todos os cálculos de similaridade deve utilizar o cosseno entre os embeddings dos textos e não o score de severidade.
 1) Fontes e Blocos de Contexto
 
 O app injeta blocos rotulados (exemplos):
