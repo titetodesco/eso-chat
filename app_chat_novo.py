@@ -934,6 +934,20 @@ if prompt:
                 st.markdown(out2)
             st.session_state.chat.append({"role": "assistant", "content": out2})
 
+        md2_lines = []
+            if dict_matches["ws"]:
+                md2_lines.append("")  # linha em branco antes da tabela
+                md2_lines.append("**WS (≥ limiar, calculado no app)**")
+                md2_lines.append("| Rank | Termo | Similaridade |")
+                md2_lines.append("|---:|---|---:|")
+                for r_idx, (label, s) in enumerate(dict_matches["ws"], 1):
+                    md2_lines.append(f"| {r_idx} | {label} | {s:.3f} |")
+            else:
+                md2_lines.append("")
+                md2_lines.append("**WS (≥ limiar, calculado no app)**")
+                md2_lines.append("Nenhum WS ≥ limiar.")
+
+        
         # 3) Comentário do LLM sobre os resultados (sem buscar fora)
         msgs = [{"role": "system", "content": st.session_state.system_prompt}]
         if use_catalog and os.path.exists(DATASETS_CONTEXT_FILE):
@@ -949,6 +963,17 @@ if prompt:
               "Regra obrigatória (Sphera): Location deve vir da coluna LOCATION, "
               "ou do campo FPSO quando LOCATION não existir; nunca usar AREA como Location. "
               "Se a coluna não existir nos blocos, retornar 'N/D'."
+          )
+        })
+        msgs.append({
+          "role": "user",
+          "content": (
+            "Formate a saída em três seções separadas com tabelas Markdown, sem texto entre elas, "
+            "seguindo exatamente o padrão do contexto: "
+            "1) **WS (≥ limiar, calculado no app)**, 2) **Precursores (≥ limiar, calculado no app)**, "
+            "3) **CP (≥ limiar, calculado no app)**. "
+            "Use cabeçalho de tabela e 3 casas decimais na similaridade. "
+            "Se uma categoria não tiver itens, escreva ‘Nenhum <categoria> ≥ limiar.’"
           )
         })
 
