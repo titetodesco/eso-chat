@@ -1079,7 +1079,7 @@ with c_a:
             # você pode reaproveitar o seu fluxo atual chamando a mesma função que trata 'prompt'
             # a seguir, apenas setamos prompt = text_to_send para seu bloco posterior tratar normalmente:
             prompt = text_to_send
-            st.session_state.draft_prompt = ""  # opcional: limpar após envio
+            #st.session_state.draft_prompt = ""  # opcional: limpar após envio
 with c_b:
     if st.button("Limpar rascunho", use_container_width=True):
         st.session_state["draft_prompt"] = ""
