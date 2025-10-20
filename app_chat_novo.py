@@ -38,7 +38,7 @@ st.markdown("""
     <div class="blink">🛠️ Aplicação em manutenção 🛠️</div>
 """, unsafe_allow_html=True)
 
-st.info("Por favor, volte mais tarde. A aplicação está passando por ajustes técnicos.")
+st.info("                        Por favor, volte mais tarde. A aplicação está passando por ajustes técnicos.")
 st.stop()
 # === FIM DO BLOCO DE MANUTENÇÃO ===
 
