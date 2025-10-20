@@ -1195,7 +1195,7 @@ if md2:
                     )
                 st.markdown("**Resumo descritivo da consulta**" + desc)
 
-    else:
+else:
         # -------- Fluxo RAG “clássico” --------
         blocks = search_all(prompt)
         up_raw = get_upload_raw(upload_raw_max)
