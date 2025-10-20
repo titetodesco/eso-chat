@@ -1210,7 +1210,7 @@ if md2:
         extra = [
             f"- Filtro temporal: {'sem filtro' if years is None else f'últimos {years} anos'}",
             f"- Limiar de similaridade aplicado: {thr_sphera:.2f}",
-            f"- Idioma inferido: {lang.upper()}",
+            #f"- Idioma inferido: {lang.upper()}",
             (f"- Location: {', '.join(sph_loc_selected)}" if sph_loc_selected else "- Location: (sem filtro)"),
             (f"- Description contém: '{sph_desc_contains}'" if sph_desc_contains else "- Description contém: (vazio)"),
             f"- WS/Prec/CP retornados: {len(dict_matches['ws'])}/{len(dict_matches['prec'])}/{len(dict_matches['cp'])}",
