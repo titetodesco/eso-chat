@@ -787,7 +787,7 @@ def render_interpretation_via_model(prompt: str, context_hint: str):
     ]
     try:
         msgs.append({"role":"user","content":"Importante: NÃO gere novas listas de WS, Precursores ou Fatores CP; apenas interprete as tabelas calculadas pelo app (embeddings dos dicionários sobre as DESCRIPTIONS dos eventos Sphera recuperados)."})
-resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
+        resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
         return resp.get("message", {}).get("content", "").strip()
     except Exception as e:
         return f"[Interpretação automática indisponível] {e}"
