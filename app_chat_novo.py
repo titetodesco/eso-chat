@@ -1050,7 +1050,7 @@ if _prec_support:
             else:
                 md2.append(f"| {r} | {str(item)} |  |")
         except Exception:
-        md2.append(f"| {r} | {str(item)} |  |")
+            md2.append(f"| {r} | {str(item)} |  |")
 else:
             md2 += [
                 "",
@@ -1085,7 +1085,7 @@ if _cp_support:
             else:
                 md2.append(f"| {r} | {str(item)} |  |")
         except Exception:
-        md2.append(f"| {r} | {str(item)} |  |")
+            md2.append(f"| {r} | {str(item)} |  |")
 else:
             md2 += [
                 "",
