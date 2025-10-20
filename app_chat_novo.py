@@ -1046,6 +1046,51 @@ min_support = st.sidebar.slider("Suporte mínimo (nº de eventos)", 1, 10, 2, 1)
 st.sidebar.markdown("### Modo de Saída")
 output_mode = st.sidebar.selectbox("Layout do resultado", ["Auto", "Investigação", "Aprendizado", "Comportamento", "Métricas"], index=0)
 
+
+
+def _is_freq_by_type_intent(text: str) -> bool:
+    t = (text or "").lower()
+    keys = ["frequência", "frequencia", "frequency", "freq", "por tipo", "event type", "observation", "near miss", "incident"]
+    return any(k in t for k in keys)
+
+def render_frequency_by_type(df_sph):
+    type_cols = ["event_type", "EVENT_TYPE", "tipo", "Tipo", "TYPE"]
+    col = next((c for c in type_cols if c in df_sph.columns), None)
+    if not col:
+        st.warning("Não encontrei coluna de tipo de evento (ex.: event_type).")
+        return
+
+    s = df_sph[col].astype(str).str.strip().str.lower()
+    map_alias = {
+        "observation": "Observation",
+        "near miss": "Near Miss",
+        "incident": "Incident",
+        "incidente": "Incident",
+        "quase acidente": "Near Miss",
+        "observação": "Observation",
+    }
+    s = s.map(lambda x: map_alias.get(x, x.title()))
+
+    freq = s.value_counts().rename_axis("Tipo").reset_index(name="Contagem")
+    total = int(freq["Contagem"].sum()) if not freq.empty else 0
+    if total == 0:
+        st.info("Não há eventos na base para calcular frequência por tipo.")
+        return
+    freq["Proporção"] = (freq["Contagem"] / total).round(3)
+
+    md = []
+    md += ["**Frequência por tipo (Sphera)**", ""]
+    md += ["| Tipo | Contagem | Proporção |", "|---|---:|---:|"]
+    for _, r in freq.iterrows():
+        md.append(f"| {r['Tipo']} | {int(r['Contagem'])} | {r['Proporção']:.3f} |")
+
+    out = "\n".join(md)
+    with st.chat_message("assistant"):
+        st.markdown(out)
+    st.session_state.chat.append({"role": "assistant", "content": out})
+
+
+
 prompt = st.chat_input("Digite sua pergunta ou cole seu texto")
 if prompt and _is_freq_by_type_intent(prompt) and df_sph is not None:
     render_frequency_by_type(df_sph)
@@ -1093,131 +1138,16 @@ if prompt:
             st.session_state.chat.append({"role": "assistant", "content": msg})
 
         # 2) Dicionários (WS / Precursores / CP)
-        dict_matches = aggregate_dict_matches_over_hits(hits, lang, thr_ws, thr_prec, thr_cp, topn_ws, topn_prec, topn_cp, agg_mode, per_event_thr, min_support)
-        md2 = []
-        # WS
-        if dict_matches["ws"]:
-            md2 += [
-                "",  # linha em branco antes da tabela
-                "**WS (≥ limiar, calculado no app)**",
-                "| Rank | Termo | Similaridade |",
-                "|---:|---|---:|",
-            ]
-            
-_ws_support = any(isinstance(x, (list, tuple)) and len(x) >= 3 for x in dict_matches.get("ws", []))
-if _ws_support:
-    md2[-2] = "| Rank | Termo | Similaridade | Suporte |"
-    md2[-1] = "|---:|---|---:|---:|"
-    for r, item in enumerate(dict_matches.get("ws", []), 1):
-        try:
-            if isinstance(item, (list, tuple)):
-                if len(item) >= 3:
-                    label, s, sup = item[0], float(item[1]), int(item[2])
-                    md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
-                elif len(item) >= 2:
-                    label, s = item[0], float(item[1])
-                    md2.append(f"| {r} | {label} | {s:.3f} |")
-                else:
-                    md2.append(f"| {r} | {str(item)} |  |")
-            else:
-                md2.append(f"| {r} | {str(item)} |  |")
-        except Exception:
-            md2.append(f"| {r} | {str(item)} |  |")
-else:
-            md2 += [
-                "",
-                "**WS (≥ limiar, calculado no app)**",
-                "Nenhum WS ≥ limiar.",
-            ]
-        
-        # Precursores
-if dict_matches["prec"]:
-            md2 += [
-                "",
-                "**Precursores (≥ limiar, calculado no app)**",
-                "| Rank | Termo | Similaridade |",
-                "|---:|---|---:|",
-            ]
-            
-_prec_support = any(isinstance(x, (list, tuple)) and len(x) >= 3 for x in dict_matches.get("prec", []))
-if _prec_support:
-    md2[-2] = "| Rank | Termo | Similaridade | Suporte |"
-    md2[-1] = "|---:|---|---:|---:|"
-    for r, item in enumerate(dict_matches.get("prec", []), 1):
-        try:
-            if isinstance(item, (list, tuple)):
-                if len(item) >= 3:
-                    label, s, sup = item[0], float(item[1]), int(item[2])
-                    md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
-                elif len(item) >= 2:
-                    label, s = item[0], float(item[1])
-                    md2.append(f"| {r} | {label} | {s:.3f} |")
-                else:
-                    md2.append(f"| {r} | {str(item)} |  |")
-            else:
-                md2.append(f"| {r} | {str(item)} |  |")
-        except Exception:
-            md2.append(f"| {r} | {str(item)} |  |")
-else:
-            md2 += [
-                "",
-                "**Precursores (≥ limiar, calculado no app)**",
-                "Nenhum Precursor ≥ limiar.",
-            ]
-        
-        # CP
-if dict_matches["cp"]:
-            md2 += [
-                "",
-                "**CP (≥ limiar, calculado no app)**",
-                "| Rank | Fator | Similaridade |",
-                "|---:|---|---:|",
-            ]
-            
-_cp_support = any(isinstance(x, (list, tuple)) and len(x) >= 3 for x in dict_matches.get("cp", []))
-if _cp_support:
-    md2[-2] = "| Rank | Fator | Similaridade | Suporte |"
-    md2[-1] = "|---:|---|---:|---:|"
-    for r, item in enumerate(dict_matches.get("cp", []), 1):
-        try:
-            if isinstance(item, (list, tuple)):
-                if len(item) >= 3:
-                    label, s, sup = item[0], float(item[1]), int(item[2])
-                    md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
-                elif len(item) >= 2:
-                    label, s = item[0], float(item[1])
-                    md2.append(f"| {r} | {label} | {s:.3f} |")
-                else:
-                    md2.append(f"| {r} | {str(item)} |  |")
-            else:
-                md2.append(f"| {r} | {str(item)} |  |")
-        except Exception:
-            md2.append(f"| {r} | {str(item)} |  |")
-else:
-            md2 += [
-                "",
-                "**CP (≥ limiar, calculado no app)**",
-                "Nenhum CP ≥ limiar.",
-            ]
-        
-if md2:
-        out2 = "\n".join(md2)        # ← AGORA COM QUEBRAS
-        with st.chat_message("assistant"):
-             st.markdown(out2)
-        st.session_state.chat.append({"role": "assistant", "content": out2})
 
-        md2_lines = []
-        if dict_matches["ws"]:
-            md2_lines.append("")  # linha em branco antes da tabela
-            md2_lines.append("**WS (≥ limiar, calculado no app)**")
-            md2_lines.append("| Rank | Termo | Similaridade |")
-            md2_lines.append("|---:|---|---:|")
-            for r_idx, (label, s) in enumerate(dict_matches["ws"], 1):
-                md2_lines.append(f"| {r_idx} | {label} | {s:.3f} |")
-        else:
-            md2_lines.append("")
-            md2_lines.append("**WS (≥ limiar, calculado no app)**")
-            md2_lines.append("Nenhum WS ≥ limiar.")
+# 2) Dicionários (WS / Precursores / CP) — renderização robusta
+md2 = []
+render_dict_tables(dict_matches, md2)
+if md2:
+    out2 = "\n".join(md2)
+    with st.chat_message("assistant"):
+        st.markdown(out2)
+    st.session_state.chat.append({"role": "assistant", "content": out2})
+
 
         
         # 3) Comentário do LLM sobre os resultados (sem buscar fora)
