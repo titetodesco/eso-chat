@@ -1024,7 +1024,7 @@ else:
             ]
         
         # Precursores
-        if dict_matches["prec"]:
+if dict_matches["prec"]:
             md2 += [
                 "",
                 "**Precursores (≥ limiar, calculado no app)**",
@@ -1059,7 +1059,7 @@ else:
             ]
         
         # CP
-        if dict_matches["cp"]:
+if dict_matches["cp"]:
             md2 += [
                 "",
                 "**CP (≥ limiar, calculado no app)**",
@@ -1093,7 +1093,7 @@ else:
                 "Nenhum CP ≥ limiar.",
             ]
         
-        if md2:
+if md2:
             out2 = "\n".join(md2)        # ← AGORA COM QUEBRAS
             with st.chat_message("assistant"):
                 st.markdown(out2)
