@@ -1198,7 +1198,7 @@ if md2:
     st.session_state.chat.append({"role": "assistant", "content": content})
 
     # 4) SUMÁRIO
-    hits = sphera_similar_to_text(query_text, thr_sphera, years=years, topk=200)
+    hits = []
     if show_summary:
         sims = [s for _, s, _ in hits] if hits else []
         per_source = {
