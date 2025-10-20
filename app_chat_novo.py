@@ -284,6 +284,113 @@ def chunk_text(text: str, max_chars=1200, overlap=200):
         start = max(0, end - ov)
     return parts
 
+def _safe_unpacked(item):
+    """Aceita (label, sim) ou (label, sim, suporte). Retorna (label:str, sim:float, support:int|None)."""
+    try:
+        if isinstance(item, (list, tuple)):
+            if len(item) >= 3:
+                return str(item[0]), float(item[1]), int(item[2])
+            if len(item) >= 2:
+                return str(item[0]), float(item[1]), None
+        return str(item), None, None
+    except Exception:
+        return str(item), None, None
+
+
+def render_dict_tables(dict_matches, md2):
+    """
+    Anexa em md2 as três tabelas: WS / Precursores / CP, de forma robusta.
+    - Se houver 'suporte' (coluna 3), adiciona a coluna automaticamente.
+    - Se a lista estiver vazia, escreve 'Nenhum ≥ limiar.' em vez de quebrar.
+    """
+    if dict_matches is None:
+        dict_matches = {"ws": [], "prec": [], "cp": []}
+
+    # ---------- WS ----------
+    md2 += [
+        "",
+        "**WS (≥ limiar, calculado no app)**",
+    ]
+    ws = dict_matches.get("ws") or []
+    if ws:
+        md2 += [
+            "| Rank | Termo | Similaridade |",
+            "|---:|---|---:|",
+        ]
+        has_sup = any(isinstance(x, (list, tuple)) and len(x) >= 3 for x in ws)
+        if has_sup:
+            md2[-2] = "| Rank | Termo | Similaridade | Suporte |"
+            md2[-1] = "|---:|---|---:|---:|"
+
+        for r, item in enumerate(ws, 1):
+            label, s, sup = _safe_unpacked(item)
+            if s is None:
+                md2.append(f"| {r} | {label} |  |")
+            else:
+                if has_sup and sup is not None:
+                    md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
+                else:
+                    md2.append(f"| {r} | {label} | {s:.3f} |")
+    else:
+        md2 += ["Nenhum WS ≥ limiar."]
+
+    # ---------- Precursores ----------
+    md2 += [
+        "",
+        "**Precursores (≥ limiar, calculado no app)**",
+    ]
+    prec = dict_matches.get("prec") or []
+    if prec:
+        md2 += [
+            "| Rank | Termo | Similaridade |",
+            "|---:|---|---:|",
+        ]
+        has_sup = any(isinstance(x, (list, tuple)) and len(x) >= 3 for x in prec)
+        if has_sup:
+            md2[-2] = "| Rank | Termo | Similaridade | Suporte |"
+            md2[-1] = "|---:|---|---:|---:|"
+
+        for r, item in enumerate(prec, 1):
+            label, s, sup = _safe_unpacked(item)
+            if s is None:
+                md2.append(f"| {r} | {label} |  |")
+            else:
+                if has_sup and sup is not None:
+                    md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
+                else:
+                    md2.append(f"| {r} | {label} | {s:.3f} |")
+    else:
+        md2 += ["Nenhum Precursor ≥ limiar."]
+
+    # ---------- CP ----------
+    md2 += [
+        "",
+        "**CP (≥ limiar, calculado no app)**",
+    ]
+    cp = dict_matches.get("cp") or []
+    if cp:
+        md2 += [
+            "| Rank | Fator | Similaridade |",
+            "|---:|---|---:|",
+        ]
+        has_sup = any(isinstance(x, (list, tuple)) and len(x) >= 3 for x in cp)
+        if has_sup:
+            md2[-2] = "| Rank | Fator | Similaridade | Suporte |"
+            md2[-1] = "|---:|---|---:|---:|"
+
+        for r, item in enumerate(cp, 1):
+            label, s, sup = _safe_unpacked(item)
+            if s is None:
+                md2.append(f"| {r} | {label} |  |")
+            else:
+                if has_sup and sup is not None:
+                    md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
+                else:
+                    md2.append(f"| {r} | {label} | {s:.3f} |")
+    else:
+        md2 += ["Nenhum Fator CP ≥ limiar."]
+
+
 # --- Heurística de idioma (PT/EN) ---
 def guess_lang(text: str) -> str:
     if not text:
