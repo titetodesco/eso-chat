@@ -21,26 +21,7 @@ import streamlit as st
 from pathlib import Path
 from datetime import datetime, timedelta
 
-# === BLOCO DE MANUTENÇÃO TEMPORÁRIA ===
-st.markdown("""
-    <style>
-    .blink {
-        animation: blinker 1s linear infinite;
-        color: red;
-        font-size: 2em;
-        font-weight: bold;
-        text-align: center;
-    }
-    @keyframes blinker {
-        50% { opacity: 0; }
-    }
-    </style>
-    <div class="blink">🛠️ Aplicação em manutenção 🛠️</div>
-""", unsafe_allow_html=True)
 
-st.info("Por favor, volte mais tarde. A aplicação está passando por ajustes técnicos.")
-st.stop()
-# === FIM DO BLOCO DE MANUTENÇÃO ===
 
 
 
