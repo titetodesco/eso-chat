@@ -1156,7 +1156,7 @@ if md2:
         st.markdown(out2)
     st.session_state.chat.append({"role": "assistant", "content": out2})
 
-
+    years = years_back if apply_time_filter else None
         
     # 3) Comentário do LLM sobre os resultados (sem buscar fora)
     msgs = [{"role": "system", "content": st.session_state.system_prompt}]
