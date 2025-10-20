@@ -1140,8 +1140,16 @@ if prompt:
         # 2) Dicionários (WS / Precursores / CP)
 
 # 2) Dicionários (WS / Precursores / CP) — renderização robusta
+try:
+    _dm = dict_matches
+except NameError:
+    _dm = {"ws": [], "prec": [], "cp": []}
+
+# Garante a lista acumuladora de markdown
 md2 = []
-render_dict_tables(dict_matches, md2)
+
+# Renderização robusta das três tabelas a partir de _dm
+render_dict_tables(_dm, md2)
 if md2:
     out2 = "\n".join(md2)
     with st.chat_message("assistant"):
