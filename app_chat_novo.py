@@ -1158,8 +1158,8 @@ if md2:
                  msgs.append({"role": "system", "content": f.read()})
         except Exception:
              pass
-     msgs.append({"role": "user", "content": f"Explique, sem buscar outras fontes, os resultados calculados no app. Limiar Sphera={thr_sphera}, anos={'todos' if not years else years}."})
-     msgs.append({
+        msgs.append({"role": "user", "content": f"Explique, sem buscar outras fontes, os resultados calculados no app. Limiar Sphera={thr_sphera}, anos={'todos' if not years else years}."})
+        msgs.append({
         "role": "user",
         "content": (
             "Regra obrigatória (Sphera): Location deve vir da coluna LOCATION, "
