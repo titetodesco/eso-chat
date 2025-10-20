@@ -1024,7 +1024,7 @@ else:
             ]
         
         # Precursores
-        if dict_matches["prec"]:
+if dict_matches["prec"]:
             md2 += [
                 "",
                 "**Precursores (≥ limiar, calculado no app)**",
