@@ -1028,8 +1028,7 @@ for r, item in enumerate(dict_matches.get("cp", []), 1):
     except Exception:
         md2.append(f"| {r} | {str(item)} |  |")
 if md2:
-            out2 = "
-".join(md2)
+            out2 = "".join(md2)
             with st.chat_message("assistant"):
                 st.markdown(out2)
             st.session_state.chat.append({"role": "assistant", "content": out2})
