@@ -20,42 +20,6 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 
-import streamlit as st
-import time
-
-# Configurações iniciais da página
-st.set_page_config(page_title="Aplicação em Manutenção", page_icon="🛠️", layout="centered")
-
-# CSS para animação de piscar
-st.markdown(
-    """
-    <style>
-    .blink {
-        animation: blinker 1s linear infinite;
-        color: red;
-        font-size: 2em;
-        font-weight: bold;
-        text-align: center;
-    }
-    @keyframes blinker {
-        50% { opacity: 0; }
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# Mensagem piscante
-st.markdown('<div class="blink">🛠️ Aplicação em manutenção 🛠️</div>', unsafe_allow_html=True)
-
-# Mensagem complementar
-st.info("Por favor, volte mais tarde. A aplicação está passando por ajustes técnicos.")
-
-# Evita erro de execução contínua
-st.stop()
-
-
-
 # ---------- Contexto (system prompt) ----------
 CONTEXT_MD_REL_PATH = Path(__file__).parent / "docs" / "contexto_eso_chat.md"
 DATASETS_CONTEXT_FILE = "datasets_context.md"  # opcional
