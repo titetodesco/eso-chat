@@ -83,63 +83,6 @@ def load_prompts_md(md_path: Path):
 
 
 @st.cache_data(show_spinner=False)
-
-
-def _is_freq_by_type_intent(text: str) -> bool:
-    t = (text or "").lower()
-    keys = ["frequência", "frequencia", "frequency", "freq", "por tipo", "event type", "observation", "near miss", "incident"]
-    return any(k in t for k in keys)
-
-def render_frequency_by_type(df_sph):
-    type_cols = ["event_type", "EVENT_TYPE", "tipo", "Tipo", "TYPE"]
-    col = next((c for c in type_cols if c in df_sph.columns), None)
-    if not col:
-        st.warning("Não encontrei coluna de tipo de evento (ex.: event_type).")
-        return
-
-    s = df_sph[col].astype(str).str.strip().str.lower()
-    map_alias = {
-        "observation": "Observation",
-        "near miss": "Near Miss",
-        "incident": "Incident",
-        "incidente": "Incident",
-        "quase acidente": "Near Miss",
-        "observação": "Observation",
-    }
-    s = s.map(lambda x: map_alias.get(x, x.title()))
-
-    freq = s.value_counts().rename_axis("Tipo").reset_index(name="Contagem")
-    total = int(freq["Contagem"].sum()) if not freq.empty else 0
-    if total == 0:
-        st.info("Não há eventos na base para calcular frequência por tipo.")
-        return
-    freq["Proporção"] = (freq["Contagem"] / total).round(3)
-
-    md = []
-    md += ["**Frequência por tipo (Sphera)**", ""]
-    md += ["| Tipo | Contagem | Proporção |", "|---|---:|---:|"]
-    for _, r in freq.iterrows():
-        md.append(f"| {r['Tipo']} | {int(r['Contagem'])} | {r['Proporção']:.3f} |")
-
-    out = "\\n".join(md)
-    with st.chat_message("assistant"):
-        st.markdown(out)
-    st.session_state.chat.append({"role": "assistant", "content": out})
-
-
-def _unpack_label_sim_support(item):
-    """Aceita (label, sim) ou (label, sim, suporte). Retorna (label, sim, suporte|None)."""
-    try:
-        if isinstance(item, (list, tuple)):
-            if len(item) >= 3:
-                return str(item[0]), float(item[1]), int(item[2])
-            if len(item) >= 2:
-                return str(item[0]), float(item[1]), None
-        return str(item), None, None
-    except Exception:
-        return str(item), None, None
-
-
 def load_file_text(p: Path) -> str:
     try:
         return p.read_text(encoding="utf-8")
@@ -186,8 +129,9 @@ else:
         st.session_state.draft_prompt = ""
 
     if st.sidebar.button("Carregar no rascunho", use_container_width=True):
-        st.session_state.draft_prompt = body
+        st.session_state["draft_prompt"] = body
         st.sidebar.success("Modelo carregado no rascunho (edite antes de enviar).")
+        st.rerun()
 
 # ---------- Config básica ----------
 st.set_page_config(page_title="ESO • CHAT (Embeddings)", page_icon="💬", layout="wide")
@@ -468,6 +412,69 @@ def encode_texts(texts: list[str], batch_size: int = 64) -> np.ndarray:
         convert_to_numpy=True, normalize_embeddings=True
     ).astype(np.float32)
     return M
+
+
+def aggregate_dict_matches_over_hits(
+    hits, lang: str,
+    thr_ws: float, thr_prec: float, thr_cp: float,
+    topn_ws: int, topn_prec: int, topn_cp: int,
+    agg_mode: str = "max",
+    per_event_thr: float = 0.30,
+    min_support: int = 2,
+):
+    """
+    WS/Precursores/CP somente dos dicionários embutidos vs DESCRIPTIONS dos hits Sphera.
+    Agrega por 'max' ou 'mean', aplica limiar por evento e suporte mínimo.
+    Retorna dict com listas de tuplas (label, sim, suporte).
+    """
+    try:
+        if not hits:
+            return {"ws": [], "prec": [], "cp": []}
+
+        descs = []
+        for _, _, row in hits:
+            d = str(row.get("Description", row.get("DESCRIPTION", ""))).strip()
+            if d:
+                descs.append(d)
+        if not descs:
+            return {"ws": [], "prec": [], "cp": []}
+
+        V_desc = encode_texts(descs, batch_size=32)  # (M, D)
+        V_desc_T = V_desc.T
+
+        def _score_bank(E_bank, labels_df, thr_global, topn_target):
+            if E_bank is None or labels_df is None or len(labels_df) != E_bank.shape[0]:
+                return []
+            S = (E_bank @ V_desc_T)  # (N_terms x M_events)
+            support = (S >= per_event_thr).sum(axis=1)
+            sims = S.mean(axis=1) if agg_mode == "mean" else S.max(axis=1)
+            mask = (support >= min_support) & (sims >= thr_global)
+            idx = np.where(mask)[0]
+            if idx.size == 0:
+                return []
+            order = idx[np.argsort(sims[idx])[::-1]]
+            out = []
+            for i in order[:topn_target]:
+                label = str(labels_df.iloc[i].get("label", labels_df.iloc[i].get("text", f"TERM_{i}")))
+                out.append((label, float(sims[i]), int(support[i])))
+            return out
+
+        E_ws, L_ws = select_ws_bank(lang)
+        E_pr, L_pr = select_prec_bank(lang)
+        E_cp, L_cp = select_cp_bank()
+
+        return {
+            "ws":  _score_bank(E_ws, L_ws, thr_ws,  topn_ws),
+            "prec": _score_bank(E_pr, L_pr, thr_prec, topn_prec),
+            "cp":  _score_bank(E_cp, L_cp, thr_cp,  topn_cp),
+        }
+    except Exception as e:
+        try:
+            st.warning(f"[Dict/Hits] Falha ao agregar dicionários sobre hits: {e}")
+        except Exception:
+            pass
+        return {"ws": [], "prec": [], "cp": []}
+
 
 def encode_query(q: str) -> np.ndarray:
     ensure_st_encoder()
@@ -779,7 +786,8 @@ def render_interpretation_via_model(prompt: str, context_hint: str):
         )}
     ]
     try:
-        resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
+        msgs.append({"role":"user","content":"Importante: NÃO gere novas listas de WS, Precursores ou Fatores CP; apenas interprete as tabelas calculadas pelo app (embeddings dos dicionários sobre as DESCRIPTIONS dos eventos Sphera recuperados)."})
+resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
         return resp.get("message", {}).get("content", "").strip()
     except Exception as e:
         return f"[Interpretação automática indisponível] {e}"
@@ -894,6 +902,21 @@ def search_all(query: str) -> list[str]:
     blocks.sort(key=lambda x: -x[0])
     return [b for _, b in blocks]
 
+
+def _send_prompt_to_chat():
+    text_to_send = (st.session_state.get("draft_prompt") or "").strip()
+    if not text_to_send:
+        return
+    # adiciona ao histórico como 'user'
+    if "chat" not in st.session_state:
+        st.session_state.chat = []
+    st.session_state.chat.append({"role": "user", "content": text_to_send})
+    # sinaliza para o pipeline do chat processar após o rerun
+    st.session_state["pending_user_prompt"] = text_to_send
+    # limpa o rascunho
+    st.session_state["draft_prompt"] = ""
+    st.rerun()
+
 # ---------- UI ----------
 st.title("ESO • CHAT — HIST + UPLD (Embeddings preferencial) + Dicionários PT/EN")
 st.caption("RAG local (Sphera / GoSee / Docs / Upload) + WS/Precursores/CP com seleção automática de idioma.")
@@ -903,11 +926,25 @@ for m in st.session_state.chat:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
 
-prompt = st.chat_input("Digite sua pergunta…")
 
+# === Saída – Dicionários (WS/Prec/CP) ===
+st.sidebar.markdown("### Saída – Dicionários (WS/Prec/CP)")
+topn_ws  = st.sidebar.slider("Top-N WS", 3, 50, 10, 1)
+topn_prec = st.sidebar.slider("Top-N Precursores", 3, 50, 10, 1)
+topn_cp  = st.sidebar.slider("Top-N CP", 3, 50, 10, 1)
+st.sidebar.markdown("**Agregação sobre eventos recuperados (Sphera)**")
+agg_mode = st.sidebar.selectbox("Como agregar similaridade por termo", ["max", "mean"], index=0)
+per_event_thr = st.sidebar.slider("Limiar por evento (dicionários)", 0.0, 1.0, 0.30, 0.01)
+min_support = st.sidebar.slider("Suporte mínimo (nº de eventos)", 1, 10, 2, 1)
+st.sidebar.markdown("### Modo de Saída")
+output_mode = st.sidebar.selectbox("Layout do resultado", ["Auto", "Investigação", "Aprendizado", "Comportamento", "Métricas"], index=0)
+
+prompt = st.chat_input("Digite sua pergunta ou cole seu texto")
 if prompt and _is_freq_by_type_intent(prompt) and df_sph is not None:
     render_frequency_by_type(df_sph)
     prompt = None
+if not prompt and "pending_user_prompt" in st.session_state:
+    prompt = st.session_state.pop("pending_user_prompt")
 if prompt:
     st.session_state.chat.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -949,90 +986,134 @@ if prompt:
             st.session_state.chat.append({"role": "assistant", "content": msg})
 
         # 2) Dicionários (WS / Precursores / CP)
-        dict_matches = match_from_dicts(query_text, lang, thr_ws, thr_prec, thr_cp, topk=50)
+        dict_matches = aggregate_dict_matches_over_hits(hits, lang, thr_ws, thr_prec, thr_cp, topn_ws, topn_prec, topn_cp, agg_mode, per_event_thr, min_support)
         md2 = []
+        # WS
         if dict_matches["ws"]:
-            md2.append("**WS (≥ limiar, calculado no app)**")
-            md2.append("| Rank | Termo | Similaridade |")
-            md2.append("|---:|---|---:|")
+            md2 += [
+                "",  # linha em branco antes da tabela
+                "**WS (≥ limiar, calculado no app)**",
+                "| Rank | Termo | Similaridade |",
+                "|---:|---|---:|",
+            ]
             
 _ws_support = any(isinstance(x, (list, tuple)) and len(x) >= 3 for x in dict_matches.get("ws", []))
 if _ws_support:
-    # ajusta header para incluir "Suporte"
-    try:
-        idx_header = len(md2) - 2  # assume header e separator acabaram de ser adicionados
-        if md2[idx_header].startswith("| Rank |") and "Similaridade |" in md2[idx_header]:
-            md2[idx_header] = "| Rank | Termo | Similaridade | Suporte |"
-        if md2[idx_header+1].startswith("|---"):
-            md2[idx_header+1] = "|---:|---|---:|---:|"
-    except Exception:
-        pass
-
+    md2[-2] = "| Rank | Termo | Similaridade | Suporte |"
+    md2[-1] = "|---:|---|---:|---:|"
 for r, item in enumerate(dict_matches.get("ws", []), 1):
     try:
-        label, s, sup = _unpack_label_sim_support(item)
-        if _ws_support and sup is not None:
-            md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
+        if isinstance(item, (list, tuple)):
+            if len(item) >= 3:
+                label, s, sup = item[0], float(item[1]), int(item[2])
+                md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
+            elif len(item) >= 2:
+                label, s = item[0], float(item[1])
+                md2.append(f"| {r} | {label} | {s:.3f} |")
+            else:
+                md2.append(f"| {r} | {str(item)} |  |")
         else:
-            md2.append(f"| {r} | {label} | {s:.3f} |")
+            md2.append(f"| {r} | {str(item)} |  |")
     except Exception:
         md2.append(f"| {r} | {str(item)} |  |")
-if dict_matches["prec"]:
-            md2.append("**Precursores (≥ limiar, calculado no app)**")
-            md2.append("| Rank | Termo | Similaridade |")
-            md2.append("|---:|---|---:|")
+        else:
+            md2 += [
+                "",
+                "**WS (≥ limiar, calculado no app)**",
+                "Nenhum WS ≥ limiar.",
+            ]
+        
+        # Precursores
+        if dict_matches["prec"]:
+            md2 += [
+                "",
+                "**Precursores (≥ limiar, calculado no app)**",
+                "| Rank | Termo | Similaridade |",
+                "|---:|---|---:|",
+            ]
             
 _prec_support = any(isinstance(x, (list, tuple)) and len(x) >= 3 for x in dict_matches.get("prec", []))
 if _prec_support:
-    try:
-        idx_header = len(md2) - 2
-        if md2[idx_header].startswith("| Rank |") and "Similaridade |" in md2[idx_header]:
-            md2[idx_header] = "| Rank | Termo | Similaridade | Suporte |"
-        if md2[idx_header+1].startswith("|---"):
-            md2[idx_header+1] = "|---:|---|---:|---:|"
-    except Exception:
-        pass
-
+    md2[-2] = "| Rank | Termo | Similaridade | Suporte |"
+    md2[-1] = "|---:|---|---:|---:|"
 for r, item in enumerate(dict_matches.get("prec", []), 1):
     try:
-        label, s, sup = _unpack_label_sim_support(item)
-        if _prec_support and sup is not None:
-            md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
+        if isinstance(item, (list, tuple)):
+            if len(item) >= 3:
+                label, s, sup = item[0], float(item[1]), int(item[2])
+                md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
+            elif len(item) >= 2:
+                label, s = item[0], float(item[1])
+                md2.append(f"| {r} | {label} | {s:.3f} |")
+            else:
+                md2.append(f"| {r} | {str(item)} |  |")
         else:
-            md2.append(f"| {r} | {label} | {s:.3f} |")
+            md2.append(f"| {r} | {str(item)} |  |")
     except Exception:
         md2.append(f"| {r} | {str(item)} |  |")
-if dict_matches["cp"]:
-            md2.append("**CP (≥ limiar, calculado no app)**")
-            md2.append("| Rank | Fator | Similaridade |")
-            md2.append("|---:|---|---:|")
+        else:
+            md2 += [
+                "",
+                "**Precursores (≥ limiar, calculado no app)**",
+                "Nenhum Precursor ≥ limiar.",
+            ]
+        
+        # CP
+        if dict_matches["cp"]:
+            md2 += [
+                "",
+                "**CP (≥ limiar, calculado no app)**",
+                "| Rank | Fator | Similaridade |",
+                "|---:|---|---:|",
+            ]
             
 _cp_support = any(isinstance(x, (list, tuple)) and len(x) >= 3 for x in dict_matches.get("cp", []))
 if _cp_support:
-    try:
-        idx_header = len(md2) - 2
-        if md2[idx_header].startswith("| Rank |") and "Similaridade |" in md2[idx_header]:
-            md2[idx_header] = "| Rank | Fator | Similaridade | Suporte |"
-        if md2[idx_header+1].startswith("|---"):
-            md2[idx_header+1] = "|---:|---|---:|---:|"
-    except Exception:
-        pass
-
+    md2[-2] = "| Rank | Fator | Similaridade | Suporte |"
+    md2[-1] = "|---:|---|---:|---:|"
 for r, item in enumerate(dict_matches.get("cp", []), 1):
     try:
-        label, s, sup = _unpack_label_sim_support(item)
-        if _cp_support and sup is not None:
-            md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
+        if isinstance(item, (list, tuple)):
+            if len(item) >= 3:
+                label, s, sup = item[0], float(item[1]), int(item[2])
+                md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
+            elif len(item) >= 2:
+                label, s = item[0], float(item[1])
+                md2.append(f"| {r} | {label} | {s:.3f} |")
+            else:
+                md2.append(f"| {r} | {str(item)} |  |")
         else:
-            md2.append(f"| {r} | {label} | {s:.3f} |")
+            md2.append(f"| {r} | {str(item)} |  |")
     except Exception:
         md2.append(f"| {r} | {str(item)} |  |")
-if md2:
-            out2 = "".join(md2)
+        else:
+            md2 += [
+                "",
+                "**CP (≥ limiar, calculado no app)**",
+                "Nenhum CP ≥ limiar.",
+            ]
+        
+        if md2:
+            out2 = "\n".join(md2)        # ← AGORA COM QUEBRAS
             with st.chat_message("assistant"):
                 st.markdown(out2)
             st.session_state.chat.append({"role": "assistant", "content": out2})
 
+
+        md2_lines = []
+        if dict_matches["ws"]:
+            md2_lines.append("")  # linha em branco antes da tabela
+            md2_lines.append("**WS (≥ limiar, calculado no app)**")
+            md2_lines.append("| Rank | Termo | Similaridade |")
+            md2_lines.append("|---:|---|---:|")
+            for r_idx, (label, s) in enumerate(dict_matches["ws"], 1):
+                md2_lines.append(f"| {r_idx} | {label} | {s:.3f} |")
+        else:
+            md2_lines.append("")
+            md2_lines.append("**WS (≥ limiar, calculado no app)**")
+            md2_lines.append("Nenhum WS ≥ limiar.")
+
+        
         # 3) Comentário do LLM sobre os resultados (sem buscar fora)
         msgs = [{"role": "system", "content": st.session_state.system_prompt}]
         if use_catalog and os.path.exists(DATASETS_CONTEXT_FILE):
@@ -1048,6 +1129,17 @@ if md2:
               "Regra obrigatória (Sphera): Location deve vir da coluna LOCATION, "
               "ou do campo FPSO quando LOCATION não existir; nunca usar AREA como Location. "
               "Se a coluna não existir nos blocos, retornar 'N/D'."
+          )
+        })
+        msgs.append({
+          "role": "user",
+          "content": (
+            "Formate a saída em três seções separadas com tabelas Markdown, sem texto entre elas, "
+            "seguindo exatamente o padrão do contexto: "
+            "1) **WS (≥ limiar, calculado no app)**, 2) **Precursores (≥ limiar, calculado no app)**, "
+            "3) **CP (≥ limiar, calculado no app)**. "
+            "Use cabeçalho de tabela e 3 casas decimais na similaridade. "
+            "Se uma categoria não tiver itens, escreva ‘Nenhum <categoria> ≥ limiar.’"
           )
         })
 
@@ -1181,26 +1273,12 @@ if md2:
 st.markdown("### 📝 Rascunho do prompt (edite antes de enviar)")
 st.caption("Dica: cole o seu texto do evento onde indicado; se for usar upload, envie os arquivos na barra lateral antes de enviar.")
 
-draft = st.text_area("Conteúdo do prompt", value=st.session_state.get("draft_prompt", ""), height=220, key="draft_editor")
+draft = st.text_area("Conteúdo do prompt", height=220, key="draft_prompt")
 
-c_a, c_b, c_c = st.columns([1,1,3])
+c_a, c_c = st.columns([1,3])
 with c_a:
-    if st.button("Enviar para o chat", use_container_width=True):
-        text_to_send = draft.strip()
-        if text_to_send:
-            # envia como se fosse o usuário
-            st.session_state.chat.append({"role": "user", "content": text_to_send})
-            with st.chat_message("user"):
-                st.markdown(text_to_send)
-            # zera o chat_input para evitar duplicação e processa como se tivesse vindo pelo chat_input
-            # você pode reaproveitar o seu fluxo atual chamando a mesma função que trata 'prompt'
-            # a seguir, apenas setamos prompt = text_to_send para seu bloco posterior tratar normalmente:
-            prompt = text_to_send
-            st.session_state.draft_prompt = ""  # opcional: limpar após envio
-with c_b:
-    if st.button("Limpar rascunho", use_container_width=True):
-        st.session_state.draft_prompt = ""
-        st.experimental_rerun()
+    st.button("Enviar para o chat", use_container_width=True, on_click=_send_prompt_to_chat)
+# (sem botão de limpar — o _send_prompt_to_chat já limpa o rascunho)
 
 
 # ---------- Painel / Diagnóstico ----------
@@ -1242,3 +1320,45 @@ if debug:
                 st.write(f"{disp}: {ver}")
             except Exception as e:
                 st.write(f"{disp}: não instalado ({e})")
+
+
+def _is_freq_by_type_intent(text: str) -> bool:
+    t = (text or "").lower()
+    keys = ["frequência", "frequencia", "frequency", "freq", "por tipo", "event type", "observation", "near miss", "incident"]
+    return any(k in t for k in keys)
+
+def render_frequency_by_type(df_sph):
+    type_cols = ["event_type", "EVENT_TYPE", "tipo", "Tipo", "TYPE"]
+    col = next((c for c in type_cols if c in df_sph.columns), None)
+    if not col:
+        st.warning("Não encontrei coluna de tipo de evento (ex.: event_type).")
+        return
+
+    s = df_sph[col].astype(str).str.strip().str.lower()
+    map_alias = {
+        "observation": "Observation",
+        "near miss": "Near Miss",
+        "incident": "Incident",
+        "incidente": "Incident",
+        "quase acidente": "Near Miss",
+        "observação": "Observation",
+    }
+    s = s.map(lambda x: map_alias.get(x, x.title()))
+
+    freq = s.value_counts().rename_axis("Tipo").reset_index(name="Contagem")
+    total = int(freq["Contagem"].sum()) if not freq.empty else 0
+    if total == 0:
+        st.info("Não há eventos na base para calcular frequência por tipo.")
+        return
+    freq["Proporção"] = (freq["Contagem"] / total).round(3)
+
+    md = []
+    md += ["**Frequência por tipo (Sphera)**", ""]
+    md += ["| Tipo | Contagem | Proporção |", "|---|---:|---:|"]
+    for _, r in freq.iterrows():
+        md.append(f"| {{r['Tipo']}} | {{int(r['Contagem'])}} | {{r['Proporção']:.3f}} |")
+
+    out = "\\n".join(md)
+    with st.chat_message("assistant"):
+        st.markdown(out)
+    st.session_state.chat.append({{"role": "assistant", "content": out}})
