@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 st.markdown("""
     <style>
     .blink {
-        animation: blinker 1s linear infinite;
+ #       animation: blinker 1s linear infinite;
         color: red;
         font-size: 2em;
         font-weight: bold;
