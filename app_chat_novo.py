@@ -786,8 +786,8 @@ def render_interpretation_via_model(prompt: str, context_hint: str):
     ]
     try:
         with st.expander("🧪 Prompt final (debug)", expanded=False): 
-    st.write(msgs)
-    resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
+            st.write(msgs)
+            resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
         return resp.get("message", {}).get("content", "").strip()
     except Exception as e:
         return f"[Interpretação automática indisponível] {e}"
