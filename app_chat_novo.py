@@ -1001,22 +1001,22 @@ _ws_support = any(isinstance(x, (list, tuple)) and len(x) >= 3 for x in dict_mat
 if _ws_support:
     md2[-2] = "| Rank | Termo | Similaridade | Suporte |"
     md2[-1] = "|---:|---|---:|---:|"
-for r, item in enumerate(dict_matches.get("ws", []), 1):
-    try:
-        if isinstance(item, (list, tuple)):
-            if len(item) >= 3:
-                label, s, sup = item[0], float(item[1]), int(item[2])
-                md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
-            elif len(item) >= 2:
-                label, s = item[0], float(item[1])
-                md2.append(f"| {r} | {label} | {s:.3f} |")
+    for r, item in enumerate(dict_matches.get("ws", []), 1):
+        try:
+            if isinstance(item, (list, tuple)):
+                if len(item) >= 3:
+                    label, s, sup = item[0], float(item[1]), int(item[2])
+                    md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
+                elif len(item) >= 2:
+                    label, s = item[0], float(item[1])
+                    md2.append(f"| {r} | {label} | {s:.3f} |")
+                else:
+                    md2.append(f"| {r} | {str(item)} |  |")
             else:
                 md2.append(f"| {r} | {str(item)} |  |")
-        else:
+        except Exception:
             md2.append(f"| {r} | {str(item)} |  |")
-    except Exception:
-        md2.append(f"| {r} | {str(item)} |  |")
-        else:
+else:
             md2 += [
                 "",
                 "**WS (≥ limiar, calculado no app)**",
