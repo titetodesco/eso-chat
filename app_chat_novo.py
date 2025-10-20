@@ -1094,11 +1094,10 @@ else:
             ]
         
 if md2:
-            out2 = "\n".join(md2)        # ← AGORA COM QUEBRAS
-            with st.chat_message("assistant"):
-                st.markdown(out2)
-            st.session_state.chat.append({"role": "assistant", "content": out2})
-
+        out2 = "\n".join(md2)        # ← AGORA COM QUEBRAS
+        with st.chat_message("assistant"):
+             st.markdown(out2)
+        st.session_state.chat.append({"role": "assistant", "content": out2})
 
         md2_lines = []
         if dict_matches["ws"]:
