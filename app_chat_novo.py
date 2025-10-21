@@ -23,7 +23,13 @@ from datetime import datetime, timedelta
 
 # ---------- Contexto (system prompt) ----------
 CONTEXT_MD_REL_PATH = Path(__file__).parent / "docs" / "contexto_eso_chat.md"
-DATASETS_CONTEXT_FILE = "datasets_context.md"  # opcional
+DATASETS_CONTEXT_FILE = os.path.join("data", "docs", "datasets_context.md")
+if os.path.exists(DATASETS_CONTEXT_FILE):
+    try:
+        with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
+            msgs.append({"role": "system", "content": f.read()})
+    except Exception:
+        pass
 
 from pathlib import Path
 import re
@@ -135,6 +141,8 @@ else:
 
 # ---------- Config básica ----------
 st.set_page_config(page_title="ESO • CHAT (Embeddings)", page_icon="💬", layout="wide")
+
+_user_has_prompt = bool(st.session_state.get("chat")) or bool(st.session_state.get("pending_user_prompt"))
 
 DATA_DIR = "data"
 AN_DIR = os.path.join(DATA_DIR, "analytics")
@@ -296,6 +304,17 @@ def _safe_unpacked(item):
     except Exception:
         return str(item), None, None
 
+def _profile_flags(mode: str):
+    if mode == "Investigação":
+        return dict(show_hits=True, show_dicts=True, show_stats=True, tone="investigativo")
+    if mode == "Aprendizado":
+        return dict(show_hits=False, show_dicts=True, show_stats=False, tone="didatico")
+    if mode == "Métricas":
+        return dict(show_hits=False, show_dicts=False, show_stats=True, tone="metricas")
+    if mode == "Comportamento":
+        return dict(show_hits=False, show_dicts=True, show_stats=False, tone="comportamental")
+    # Auto
+    return dict(show_hits=True, show_dicts=True, show_stats=True, tone="equilibrado")
 
 def render_dict_tables(dict_matches, md2):
     """
@@ -683,9 +702,14 @@ with c1:
         st.session_state.upld_meta = []
         st.session_state.upld_emb = None
         st.session_state.pop("last_upload_digest", None)
+        st.rerun()
 with c2:
     if st.button("Limpar chat", use_container_width=True):
         st.session_state.chat = []
+        st.session_state.pop("pending_user_prompt", None)  # evita reenvio automático
+        st.session_state["draft_prompt"] = ""              # zera rascunho
+        st.rerun()
+
 
 # ---------- Indexação de Uploads ----------
 if uploaded_files:
@@ -1045,6 +1069,7 @@ per_event_thr = st.sidebar.slider("Limiar por evento (dicionários)", 0.0, 1.0, 
 min_support = st.sidebar.slider("Suporte mínimo (nº de eventos)", 1, 10, 2, 1)
 st.sidebar.markdown("### Modo de Saída")
 output_mode = st.sidebar.selectbox("Layout do resultado", ["Auto", "Investigação", "Aprendizado", "Comportamento", "Métricas"], index=0)
+_flags = _profile_flags(output_mode)
 
 
 
@@ -1088,8 +1113,6 @@ def render_frequency_by_type(df_sph):
     with st.chat_message("assistant"):
         st.markdown(out)
     st.session_state.chat.append({"role": "assistant", "content": out})
-
-
 
 prompt = st.chat_input("Digite sua pergunta ou cole seu texto")
 if prompt and _is_freq_by_type_intent(prompt) and df_sph is not None:
@@ -1149,174 +1172,176 @@ except NameError:
 md2 = []
 
 # Renderização robusta das três tabelas a partir de _dm
-render_dict_tables(_dm, md2)
-if md2:
-    out2 = "\n".join(md2)
-    with st.chat_message("assistant"):
-        st.markdown(out2)
-    st.session_state.chat.append({"role": "assistant", "content": out2})
-
-    years = years_back if apply_time_filter else None
-        
-    # 3) Comentário do LLM sobre os resultados (sem buscar fora)
-    msgs = [{"role": "system", "content": st.session_state.system_prompt}]
-    if use_catalog and os.path.exists(DATASETS_CONTEXT_FILE):
-        try:
-             with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
-                 msgs.append({"role": "system", "content": f.read()})
-        except Exception:
-             pass
-        msgs.append({"role": "user", "content": f"Explique, sem buscar outras fontes, os resultados calculados no app. Limiar Sphera={thr_sphera}, anos={'todos' if not years else years}."})
-        msgs.append({
-        "role": "user",
-        "content": (
-            "Regra obrigatória (Sphera): Location deve vir da coluna LOCATION, "
-            "ou do campo FPSO quando LOCATION não existir; nunca usar AREA como Location. "
-            "Se a coluna não existir nos blocos, retornar 'N/D'."
-        )
-    })
-    msgs.append({
-        "role": "user",
-        "content": (
-          "Formate a saída em três seções separadas com tabelas Markdown, sem texto entre elas, "
-          "seguindo exatamente o padrão do contexto: "
-          "1) **WS (≥ limiar, calculado no app)**, 2) **Precursores (≥ limiar, calculado no app)**, "
-          "3) **CP (≥ limiar, calculado no app)**. "
-          "Use cabeçalho de tabela e 3 casas decimais na similaridade. "
-          "Se uma categoria não tiver itens, escreva ‘Nenhum <categoria> ≥ limiar.’"
-        )
-    })
-
-    with st.chat_message("assistant"):
-        with st.spinner("Consultando o modelo (análise explicativa)…"):
-            try:
-                resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
-                content = resp.get("message", {}).get("content", "").strip() or json.dumps(resp)[:1200]
-            except Exception as e:
-                content = f"[Comentário do modelo indisponível] {e}"
-            st.markdown(content)
-    st.session_state.chat.append({"role": "assistant", "content": content})
-
-    # 4) SUMÁRIO
-    hits = []
-    if show_summary:
-        sims = [s for _, s, _ in hits] if hits else []
-        per_source = {
-            "Sphera": {"count": len(sims), "sims": sims},
-            "GoSee": {"count": 0, "sims": []},
-            "Docs": {"count": 0, "sims": []},
-            "Upload": {"count": len(st.session_state.upld_texts) if st.session_state.upld_texts else 0, "sims": []},
-        }
-        extra = [
-            f"- Filtro temporal: {'sem filtro' if years is None else f'últimos {years} anos'}",
-            f"- Limiar de similaridade aplicado: {thr_sphera:.2f}",
-            #f"- Idioma inferido: {lang.upper()}",
-            (f"- Location: {', '.join(sph_loc_selected)}" if sph_loc_selected else "- Location: (sem filtro)"),
-            (f"- Description contém: '{sph_desc_contains}'" if sph_desc_contains else "- Description contém: (vazio)"),
-         #   f"- WS/Prec/CP retornados: {len(dict_matches['ws'])}/{len(dict_matches['prec'])}/{len(dict_matches['cp'])}"
-        ]
-        _dm = locals().get("dict_matches", {"ws": [], "prec": [], "cp": []})
-        extra.append(
-           f"- WS/Prec/CP retornados: {len(_dm.get('ws', []))}/{len(_dm.get('prec', []))}/{len(_dm.get('cp', []))}"
-        )
-
+if _user_has_prompt and _flags.get("show_dicts", True):
+    render_dict_tables(_dm, md2)
+    if md2:
+        out2 = "\n".join(md2)
         with st.chat_message("assistant"):
-            render_stats_section("Estatísticas principais geradas", per_source, extra)
-            render_visual_layout_example()
-            if summary_via_model:
-                context_hint = f"Sphera hits={len(sims)}, thr={thr_sphera}, years={'all' if years is None else years}"
-                interp = render_interpretation_via_model(prompt, context_hint)
-            else:
-                interp = (
-                    "- Similaridades indicam proximidade textual com descrições Sphera;"
-                    "- Ajuste de limiar pode aumentar precisão (↑) ou abrangência (↓);"
-                    "- Verificar manualmente top eventos;"
-                    "- Revisar WS/Precursores/CP com maior similaridade para ações preventivas."
-                 )
-            st.markdown("**4. Interpretação dos resultados (exemplo típico)**" + interp)
-            stats_text = "".join(extra)
-            if summary_via_model:
-                desc = render_descriptive_summary_via_model(prompt, stats_text)
-            else:
-                desc = (
-                    "Foram retornados eventos do Sphera acima do limiar de similaridade definido, "
-                    "considerando o escopo e filtros aplicados. As correspondências em WS, "
-                    "Precursores e CP reforçam a leitura contextual e subsidiam decisões de risco."
-                )
-            st.markdown("**Resumo descritivo da consulta**" + desc)
-else:
-        # -------- Fluxo RAG “clássico” --------
-        blocks = search_all(prompt)
-        up_raw = get_upload_raw(upload_raw_max)
-        if up_raw:
-            blocks = [f"[UPLOAD_RAW]{up_raw}"] + blocks
-
+            st.markdown(out2)
+        st.session_state.chat.append({"role": "assistant", "content": out2})
+    
+        years = years_back if apply_time_filter else None
+            
+        # 3) Comentário do LLM sobre os resultados (sem buscar fora)
         msgs = [{"role": "system", "content": st.session_state.system_prompt}]
         if use_catalog and os.path.exists(DATASETS_CONTEXT_FILE):
             try:
-                with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
-                    msgs.append({"role": "system", "content": f.read()})
+                 with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
+                     msgs.append({"role": "system", "content": f.read()})
             except Exception:
-                pass
-
-        if blocks:
-            ctx = "".join(blocks)
-            msgs.append({"role": "user", "content": f"CONTEXTOS (HIST + UPLOAD):{ctx}"})
-            msgs.append({"role": "user", "content": f"PERGUNTA: {prompt}"})
-        else:
-            msgs.append({"role": "user", "content": prompt})
-
+                 pass
+            msgs.append({"role": "user", "content": f"Explique, sem buscar outras fontes, os resultados calculados no app. Limiar Sphera={thr_sphera}, anos={'todos' if not years else years}."})
+            msgs.append({
+            "role": "user",
+            "content": (
+                "Regra obrigatória (Sphera): Location deve vir da coluna LOCATION, "
+                "ou do campo FPSO quando LOCATION não existir; nunca usar AREA como Location. "
+                "Se a coluna não existir nos blocos, retornar 'N/D'."
+            )
+        })
+        msgs.append({
+            "role": "user",
+            "content": (
+              "Formate a saída em três seções separadas com tabelas Markdown, sem texto entre elas, "
+              "seguindo exatamente o padrão do contexto: "
+              "1) **WS (≥ limiar, calculado no app)**, 2) **Precursores (≥ limiar, calculado no app)**, "
+              "3) **CP (≥ limiar, calculado no app)**. "
+              "Use cabeçalho de tabela e 3 casas decimais na similaridade. "
+              "Se uma categoria não tiver itens, escreva ‘Nenhum <categoria> ≥ limiar.’"
+            )
+        })
+    
         with st.chat_message("assistant"):
-            with st.spinner("Consultando o modelo…"):
+            with st.spinner("Consultando o modelo (análise explicativa)…"):
                 try:
                     resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
                     content = resp.get("message", {}).get("content", "").strip() or json.dumps(resp)[:1200]
                 except Exception as e:
-                    content = f"Falha ao consultar o modelo: {e}"
+                    content = f"[Comentário do modelo indisponível] {e}"
                 st.markdown(content)
         st.session_state.chat.append({"role": "assistant", "content": content})
-
-        # SUMÁRIO
+    
+        # 4) SUMÁRIO
+        hits = []
         if show_summary:
-            blocks_wo_raw = [b for b in blocks if not b.startswith("[UPLOAD_RAW]")]
-            per_source = parse_blocks(blocks_wo_raw)
+            sims = [s for _, s, _ in hits] if hits else []
+            per_source = {
+                "Sphera": {"count": len(sims), "sims": sims},
+                "GoSee": {"count": 0, "sims": []},
+                "Docs": {"count": 0, "sims": []},
+                "Upload": {"count": len(st.session_state.upld_texts) if st.session_state.upld_texts else 0, "sims": []},
+            }
             extra = [
-                f"- Top-K: Sphera={k_sph}, GoSee={k_gos}, Docs={k_his}, Upload={k_upl}",
-                f"- Limiar WS/Prec/CP: {thr_ws:.2f}/{thr_prec:.2f}/{thr_cp:.2f}",
-                f"- Idioma inferido: {lang.upper()}",
+                f"- Filtro temporal: {'sem filtro' if years is None else f'últimos {years} anos'}",
+                f"- Limiar de similaridade aplicado: {thr_sphera:.2f}",
+                #f"- Idioma inferido: {lang.upper()}",
                 (f"- Location: {', '.join(sph_loc_selected)}" if sph_loc_selected else "- Location: (sem filtro)"),
                 (f"- Description contém: '{sph_desc_contains}'" if sph_desc_contains else "- Description contém: (vazio)"),
-                f"- Uploads indexados: {len(st.session_state.upld_texts)} chunks" if st.session_state.upld_texts else "- Sem uploads no contexto",
+             #   f"- WS/Prec/CP retornados: {len(dict_matches['ws'])}/{len(dict_matches['prec'])}/{len(dict_matches['cp'])}"
             ]
+            _dm = locals().get("dict_matches", {"ws": [], "prec": [], "cp": []})
+            extra.append(
+               f"- WS/Prec/CP retornados: {len(_dm.get('ws', []))}/{len(_dm.get('prec', []))}/{len(_dm.get('cp', []))}"
+            )
+    
             with st.chat_message("assistant"):
+              if _user_has_prompt and _flags.get("show_stats", True):
                 render_stats_section("Estatísticas principais geradas", per_source, extra)
                 render_visual_layout_example()
                 if summary_via_model:
-                    context_hint = (
-                        f"Sphera n={per_source['Sphera']['count']} avg={_agg_sims(per_source['Sphera']['sims'])['avg']}; "
-                        f"GoSee n={per_source['GoSee']['count']}; Docs n={per_source['Docs']['count']}; "
-                        f"Upload n={per_source['Upload']['count']}"
-                    )
+                    context_hint = f"Sphera hits={len(sims)}, thr={thr_sphera}, years={'all' if years is None else years}"
                     interp = render_interpretation_via_model(prompt, context_hint)
                 else:
                     interp = (
-                        "- Resultados agregam múltiplas fontes com base em similaridade;"
-                        "- Priorize itens com maior similaridade do cosseno e origem Sphera;"
-                        "- Use WS/Prec/CP como apoio a ações corretivas/preventivas;"
-                        "- Ajuste Top-K/limiares para refinar o escopo."
-                    )
+                        "- Similaridades indicam proximidade textual com descrições Sphera;"
+                        "- Ajuste de limiar pode aumentar precisão (↑) ou abrangência (↓);"
+                        "- Verificar manualmente top eventos;"
+                        "- Revisar WS/Precursores/CP com maior similaridade para ações preventivas."
+                     )
                 st.markdown("**4. Interpretação dos resultados (exemplo típico)**" + interp)
-
                 stats_text = "".join(extra)
                 if summary_via_model:
                     desc = render_descriptive_summary_via_model(prompt, stats_text)
                 else:
                     desc = (
-                        "A consulta integrou Sphera, GoSee, Docs e Uploads segundo os Top-K e filtros definidos. "
-                        "As similaridades mais altas (cosseno) indicam proximidade textual e relevância operacional. "
-                        "Ajustes de limiar/Top-K podem ampliar ou reduzir a abrangência."
+                        "Foram retornados eventos do Sphera acima do limiar de similaridade definido, "
+                        "considerando o escopo e filtros aplicados. As correspondências em WS, "
+                        "Precursores e CP reforçam a leitura contextual e subsidiam decisões de risco."
                     )
                 st.markdown("**Resumo descritivo da consulta**" + desc)
+    else:
+            # -------- Fluxo RAG “clássico” --------
+            blocks = search_all(prompt)
+            up_raw = get_upload_raw(upload_raw_max)
+            if up_raw:
+                blocks = [f"[UPLOAD_RAW]{up_raw}"] + blocks
+    
+            msgs = [{"role": "system", "content": st.session_state.system_prompt}]
+            if use_catalog and os.path.exists(DATASETS_CONTEXT_FILE):
+                try:
+                    with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
+                        msgs.append({"role": "system", "content": f.read()})
+                except Exception:
+                    pass
+    
+            if blocks:
+                ctx = "".join(blocks)
+                msgs.append({"role": "user", "content": f"CONTEXTOS (HIST + UPLOAD):{ctx}"})
+                msgs.append({"role": "user", "content": f"PERGUNTA: {prompt}"})
+            else:
+                msgs.append({"role": "user", "content": prompt})
+    
+            with st.chat_message("assistant"):
+                with st.spinner("Consultando o modelo…"):
+                    try:
+                        resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
+                        content = resp.get("message", {}).get("content", "").strip() or json.dumps(resp)[:1200]
+                    except Exception as e:
+                        content = f"Falha ao consultar o modelo: {e}"
+                    st.markdown(content)
+            st.session_state.chat.append({"role": "assistant", "content": content})
+    
+            # SUMÁRIO
+            if show_summary:
+                blocks_wo_raw = [b for b in blocks if not b.startswith("[UPLOAD_RAW]")]
+                per_source = parse_blocks(blocks_wo_raw)
+                extra = [
+                    f"- Top-K: Sphera={k_sph}, GoSee={k_gos}, Docs={k_his}, Upload={k_upl}",
+                    f"- Limiar WS/Prec/CP: {thr_ws:.2f}/{thr_prec:.2f}/{thr_cp:.2f}",
+                    f"- Idioma inferido: {lang.upper()}",
+                    (f"- Location: {', '.join(sph_loc_selected)}" if sph_loc_selected else "- Location: (sem filtro)"),
+                    (f"- Description contém: '{sph_desc_contains}'" if sph_desc_contains else "- Description contém: (vazio)"),
+                    f"- Uploads indexados: {len(st.session_state.upld_texts)} chunks" if st.session_state.upld_texts else "- Sem uploads no contexto",
+                ]
+                with st.chat_message("assistant"):
+                    render_stats_section("Estatísticas principais geradas", per_source, extra)
+                    render_visual_layout_example()
+                    if summary_via_model:
+                        context_hint = (
+                            f"Sphera n={per_source['Sphera']['count']} avg={_agg_sims(per_source['Sphera']['sims'])['avg']}; "
+                            f"GoSee n={per_source['GoSee']['count']}; Docs n={per_source['Docs']['count']}; "
+                            f"Upload n={per_source['Upload']['count']}"
+                        )
+                        interp = render_interpretation_via_model(prompt, context_hint)
+                    else:
+                        interp = (
+                            "- Resultados agregam múltiplas fontes com base em similaridade;"
+                            "- Priorize itens com maior similaridade do cosseno e origem Sphera;"
+                            "- Use WS/Prec/CP como apoio a ações corretivas/preventivas;"
+                            "- Ajuste Top-K/limiares para refinar o escopo."
+                        )
+                    st.markdown("**4. Interpretação dos resultados (exemplo típico)**" + interp)
+    
+                    stats_text = "".join(extra)
+                    if summary_via_model:
+                        desc = render_descriptive_summary_via_model(prompt, stats_text)
+                    else:
+                        desc = (
+                            "A consulta integrou Sphera, GoSee, Docs e Uploads segundo os Top-K e filtros definidos. "
+                            "As similaridades mais altas (cosseno) indicam proximidade textual e relevância operacional. "
+                            "Ajustes de limiar/Top-K podem ampliar ou reduzir a abrangência."
+                        )
+                    st.markdown("**Resumo descritivo da consulta**" + desc)
 
 st.markdown("### 📝 Rascunho do prompt (edite antes de enviar)")
 st.caption("Dica: cole o seu texto do evento onde indicado; se for usar upload, envie os arquivos na barra lateral antes de enviar.")
