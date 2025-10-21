@@ -1221,97 +1221,58 @@ if _user_has_prompt and _flags.get("show_dicts", True):
         st.session_state.chat.append({"role": "assistant", "content": content})
     
         # 4) SUMÁRIO
-        #hits = []
+        # --- Correção: mantém os hits calculados acima ---
         if show_summary:
-            sims = [s for _, s, _ in hits] if hits else []
+            # Usa os hits reais do fluxo Sphera, não zera mais
+            sims = [s for _, s, _ in hits] if (hits and isinstance(hits, list)) else []
+            sph_count = len(hits) if hits else 0
+        
             per_source = {
-                "Sphera": {"count": len(sims), "sims": sims},
+                "Sphera": {"count": sph_count, "sims": sims},
                 "GoSee": {"count": 0, "sims": []},
                 "Docs": {"count": 0, "sims": []},
                 "Upload": {"count": len(st.session_state.upld_texts) if st.session_state.upld_texts else 0, "sims": []},
             }
+        
             extra = [
                 f"- Filtro temporal: {'sem filtro' if years is None else f'últimos {years} anos'}",
                 f"- Limiar de similaridade aplicado: {thr_sphera:.2f}",
-                #f"- Idioma inferido: {lang.upper()}",
                 (f"- Location: {', '.join(sph_loc_selected)}" if sph_loc_selected else "- Location: (sem filtro)"),
                 (f"- Description contém: '{sph_desc_contains}'" if sph_desc_contains else "- Description contém: (vazio)"),
-             #   f"- WS/Prec/CP retornados: {len(dict_matches['ws'])}/{len(dict_matches['prec'])}/{len(dict_matches['cp'])}"
             ]
+        
             _dm = locals().get("dict_matches", {"ws": [], "prec": [], "cp": []})
             extra.append(
-               f"- WS/Prec/CP retornados: {len(_dm.get('ws', []))}/{len(_dm.get('prec', []))}/{len(_dm.get('cp', []))}"
+                f"- WS/Prec/CP retornados: {len(_dm.get('ws', []))}/{len(_dm.get('prec', []))}/{len(_dm.get('cp', []))}"
             )
-    
-            with st.chat_message("assistant"):
-                # =======================
-                # 1) ACERTO DE ESTATÍSTICAS
-                # =======================
-                # Usa 'sims' como verdade terreno para "Sphera: N itens"
-                _sph_n = len(sims) if sims is not None else 0
+        
+            if _flags.get("show_stats", True):
+                render_stats_section("Estatísticas principais geradas", per_source, extra)
+        
+            # (Se quiser, pode comentar a linha abaixo para não mostrar as visualizações genéricas)
+            # render_visual_layout_example()
+        
+            if summary_via_model:
+                _yrs_txt = "all" if (years in (None, 'all')) else str(years)
+                _thr_txt = f"{thr_sphera:.2f}"
+                context_hint = f"Sphera hits={sph_count}, thr={_thr_txt}, years={_yrs_txt}"
+                interp = render_interpretation_via_model(prompt, context_hint)
+
             
-                # Garante que per_source['sphera'] exista e reflita _sph_n
-                per_source["sphera"] = per_source.get("sphera", {})
-                per_source["sphera"]["n"] = _sph_n
+           # Texto claro e coerente sobre filtros
+           _yrs_txt = "all" if (years in (None, "all")) else str(years)
+           try:
+                _thr_txt = f"{float(thr_sphera):.2f}"
+           except Exception:
+                 _thr_txt = str(thr_sphera)
             
-                # Se a consulta é somente Sphera, esconda fontes zeradas para não poluir
-                per_source_clean = {k: v for k, v in per_source.items() if (k == "sphera") or (v.get("n", 0) > 0)}
+           # Contexto enviado ao modelo: números certos + TABELA quando há resultados
+           context_hint = f"Sphera hits={_sph_n}, thr={_thr_txt}, years={_yrs_txt}"
+           if sph_table_md:
+                context_hint += "\n\nEVENTOS Sphera (Top-N):\n" + sph_table_md
             
-                if _user_has_prompt and _flags.get("show_stats", True):
-                    render_stats_section("Estatísticas principais geradas", per_source_clean, extra)
-            
-                # =======================
-                # 2) (OPCIONAL) REMOVER VISUALIZAÇÕES-EXEMPLO
-                # =======================
-                # Você comentou que isso "não agrega" e polui a saída.
-                # Então comente/retire a linha abaixo:
-                # render_visual_layout_example()
-            
-                # =======================
-                # 3) INTERPRETAÇÃO VIA MODELO (com TABELA embutida quando houver hits)
-                # =======================
-                if summary_via_model:
-                    # Monta uma pequena tabela markdown apenas com os Top-N (sem função nova)
-                    sph_table_md = ""
-                    if _sph_n > 0:
-                        top = min(10, _sph_n)  # ajuste se quiser mais/menos linhas
-                        lines = ["| EVENT_ID | Similaridade | LOCATION | Descrição |", "|---|---:|---|---|"]
-                        # 'sims' deve estar no formato que você já usa (tipicamente lista de tuplas (sim, idx, row))
-                        for t in sims[:top]:
-                            try:
-                                # Aceita (sim, idx, row) ou dicionário semelhante
-                                if isinstance(t, (list, tuple)) and len(t) >= 3:
-                                    sim_val, _, row = t[0], t[1], t[2]
-                                else:
-                                    # fallback para formatos alternativos
-                                    sim_val = float(t.get("Similarity", 0.0))
-                                    row = t
-            
-                                # row pode ser dict (df.iloc[idx].to_dict()) ou objeto com atributos
-                                get = row.get if isinstance(row, dict) else lambda k, d="": getattr(row, k, d)
-            
-                                eid = str(get("EVENT_ID", ""))
-                                loc = str(get("LOCATION", ""))
-                                desc = str(get("Description", "")).replace("\n", " ").strip()[:240]
-                                lines.append(f"| {eid} | {float(sim_val):.3f} | {loc} | {desc} |")
-                            except Exception:
-                                continue
-                        sph_table_md = "\n".join(lines)
-            
-                    # Texto claro e coerente sobre filtros
-                    _yrs_txt = "all" if (years in (None, "all")) else str(years)
-                    try:
-                        _thr_txt = f"{float(thr_sphera):.2f}"
-                    except Exception:
-                        _thr_txt = str(thr_sphera)
-            
-                    # Contexto enviado ao modelo: números certos + TABELA quando há resultados
-                    context_hint = f"Sphera hits={_sph_n}, thr={_thr_txt}, years={_yrs_txt}"
-                    if sph_table_md:
-                        context_hint += "\n\nEVENTOS Sphera (Top-N):\n" + sph_table_md
-            
-                    # Agora sim chamamos o modelo com contexto útil. Sem pedir desculpas.
-                    interp = render_interpretation_via_model(prompt, context_hint)
+           # Agora sim chamamos o modelo com contexto útil. Sem pedir desculpas.
+           interp = render_interpretation_via_model(prompt, context_hint)
     else:
             # -------- Fluxo RAG “clássico” --------
             blocks = search_all(prompt)
