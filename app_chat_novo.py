@@ -1221,7 +1221,7 @@ if _user_has_prompt and _flags.get("show_dicts", True):
         st.session_state.chat.append({"role": "assistant", "content": content})
     
         # 4) SUMÁRIO
-        hits = []
+        #hits = []
         if show_summary:
             sims = [s for _, s, _ in hits] if hits else []
             per_source = {
