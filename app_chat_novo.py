@@ -1216,9 +1216,9 @@ if md2:
          #   f"- WS/Prec/CP retornados: {len(dict_matches['ws'])}/{len(dict_matches['prec'])}/{len(dict_matches['cp'])}"
         ]
         _dm = locals().get("dict_matches", {"ws": [], "prec": [], "cp": []})
-            extra.append(
-                f"- WS/Prec/CP retornados: {len(_dm.get('ws', []))}/{len(_dm.get('prec', []))}/{len(_dm.get('cp', []))}"
-            )
+        extra.append(
+           f"- WS/Prec/CP retornados: {len(_dm.get('ws', []))}/{len(_dm.get('prec', []))}/{len(_dm.get('cp', []))}"
+        )
 
         with st.chat_message("assistant"):
             render_stats_section("Estatísticas principais geradas", per_source, extra)
