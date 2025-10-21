@@ -1259,20 +1259,20 @@ if _user_has_prompt and _flags.get("show_dicts", True):
                 interp = render_interpretation_via_model(prompt, context_hint)
 
             
-           # Texto claro e coerente sobre filtros
-           _yrs_txt = "all" if (years in (None, "all")) else str(years)
-           try:
-                _thr_txt = f"{float(thr_sphera):.2f}"
-           except Exception:
-                 _thr_txt = str(thr_sphera)
-            
-           # Contexto enviado ao modelo: números certos + TABELA quando há resultados
-           context_hint = f"Sphera hits={_sph_n}, thr={_thr_txt}, years={_yrs_txt}"
-           if sph_table_md:
-                context_hint += "\n\nEVENTOS Sphera (Top-N):\n" + sph_table_md
-            
-           # Agora sim chamamos o modelo com contexto útil. Sem pedir desculpas.
-           interp = render_interpretation_via_model(prompt, context_hint)
+               # Texto claro e coerente sobre filtros
+               _yrs_txt = "all" if (years in (None, "all")) else str(years)
+               try:
+                    _thr_txt = f"{float(thr_sphera):.2f}"
+               except Exception:
+                     _thr_txt = str(thr_sphera)
+                
+               # Contexto enviado ao modelo: números certos + TABELA quando há resultados
+               context_hint = f"Sphera hits={_sph_n}, thr={_thr_txt}, years={_yrs_txt}"
+               if sph_table_md:
+                    context_hint += "\n\nEVENTOS Sphera (Top-N):\n" + sph_table_md
+                
+               # Agora sim chamamos o modelo com contexto útil. Sem pedir desculpas.
+               interp = render_interpretation_via_model(prompt, context_hint)
     else:
             # -------- Fluxo RAG “clássico” --------
             blocks = search_all(prompt)
