@@ -1195,8 +1195,7 @@ if _user_has_prompt and _flags.get("show_dicts", True):
             "role": "user",
             "content": (
                 "Regra obrigatória (Sphera): Location deve vir da coluna LOCATION, "
-                "ou do campo FPSO quando LOCATION não existir; nunca usar AREA como Location. "
-                "Se a coluna não existir nos blocos, retornar 'N/D'."
+                "nunca usar AREA como Location. "
             )
         })
         msgs.append({
@@ -1245,30 +1244,74 @@ if _user_has_prompt and _flags.get("show_dicts", True):
             )
     
             with st.chat_message("assistant"):
-              if _user_has_prompt and _flags.get("show_stats", True):
-                render_stats_section("Estatísticas principais geradas", per_source, extra)
-                render_visual_layout_example()
+                # =======================
+                # 1) ACERTO DE ESTATÍSTICAS
+                # =======================
+                # Usa 'sims' como verdade terreno para "Sphera: N itens"
+                _sph_n = len(sims) if sims is not None else 0
+            
+                # Garante que per_source['sphera'] exista e reflita _sph_n
+                per_source["sphera"] = per_source.get("sphera", {})
+                per_source["sphera"]["n"] = _sph_n
+            
+                # Se a consulta é somente Sphera, esconda fontes zeradas para não poluir
+                per_source_clean = {k: v for k, v in per_source.items() if (k == "sphera") or (v.get("n", 0) > 0)}
+            
+                if _user_has_prompt and _flags.get("show_stats", True):
+                    render_stats_section("Estatísticas principais geradas", per_source_clean, extra)
+            
+                # =======================
+                # 2) (OPCIONAL) REMOVER VISUALIZAÇÕES-EXEMPLO
+                # =======================
+                # Você comentou que isso "não agrega" e polui a saída.
+                # Então comente/retire a linha abaixo:
+                # render_visual_layout_example()
+            
+                # =======================
+                # 3) INTERPRETAÇÃO VIA MODELO (com TABELA embutida quando houver hits)
+                # =======================
                 if summary_via_model:
-                    context_hint = f"Sphera hits={len(sims)}, thr={thr_sphera}, years={'all' if years is None else years}"
+                    # Monta uma pequena tabela markdown apenas com os Top-N (sem função nova)
+                    sph_table_md = ""
+                    if _sph_n > 0:
+                        top = min(10, _sph_n)  # ajuste se quiser mais/menos linhas
+                        lines = ["| EVENT_ID | Similaridade | LOCATION | Descrição |", "|---|---:|---|---|"]
+                        # 'sims' deve estar no formato que você já usa (tipicamente lista de tuplas (sim, idx, row))
+                        for t in sims[:top]:
+                            try:
+                                # Aceita (sim, idx, row) ou dicionário semelhante
+                                if isinstance(t, (list, tuple)) and len(t) >= 3:
+                                    sim_val, _, row = t[0], t[1], t[2]
+                                else:
+                                    # fallback para formatos alternativos
+                                    sim_val = float(t.get("Similarity", 0.0))
+                                    row = t
+            
+                                # row pode ser dict (df.iloc[idx].to_dict()) ou objeto com atributos
+                                get = row.get if isinstance(row, dict) else lambda k, d="": getattr(row, k, d)
+            
+                                eid = str(get("EVENT_ID", ""))
+                                loc = str(get("LOCATION", ""))
+                                desc = str(get("Description", "")).replace("\n", " ").strip()[:240]
+                                lines.append(f"| {eid} | {float(sim_val):.3f} | {loc} | {desc} |")
+                            except Exception:
+                                continue
+                        sph_table_md = "\n".join(lines)
+            
+                    # Texto claro e coerente sobre filtros
+                    _yrs_txt = "all" if (years in (None, "all")) else str(years)
+                    try:
+                        _thr_txt = f"{float(thr_sphera):.2f}"
+                    except Exception:
+                        _thr_txt = str(thr_sphera)
+            
+                    # Contexto enviado ao modelo: números certos + TABELA quando há resultados
+                    context_hint = f"Sphera hits={_sph_n}, thr={_thr_txt}, years={_yrs_txt}"
+                    if sph_table_md:
+                        context_hint += "\n\nEVENTOS Sphera (Top-N):\n" + sph_table_md
+            
+                    # Agora sim chamamos o modelo com contexto útil. Sem pedir desculpas.
                     interp = render_interpretation_via_model(prompt, context_hint)
-                else:
-                    interp = (
-                        "- Similaridades indicam proximidade textual com descrições Sphera;"
-                        "- Ajuste de limiar pode aumentar precisão (↑) ou abrangência (↓);"
-                        "- Verificar manualmente top eventos;"
-                        "- Revisar WS/Precursores/CP com maior similaridade para ações preventivas."
-                     )
-                st.markdown("**4. Interpretação dos resultados (exemplo típico)**" + interp)
-                stats_text = "".join(extra)
-                if summary_via_model:
-                    desc = render_descriptive_summary_via_model(prompt, stats_text)
-                else:
-                    desc = (
-                        "Foram retornados eventos do Sphera acima do limiar de similaridade definido, "
-                        "considerando o escopo e filtros aplicados. As correspondências em WS, "
-                        "Precursores e CP reforçam a leitura contextual e subsidiam decisões de risco."
-                    )
-                st.markdown("**Resumo descritivo da consulta**" + desc)
     else:
             # -------- Fluxo RAG “clássico” --------
             blocks = search_all(prompt)
