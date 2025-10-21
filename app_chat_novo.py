@@ -1113,7 +1113,7 @@ def render_frequency_by_type(df_sph):
     with st.chat_message("assistant"):
         st.markdown(out)
     st.session_state.chat.append({"role": "assistant", "content": out})
-
+hits=[];
 prompt = st.chat_input("Digite sua pergunta ou cole seu texto")
 if prompt and _is_freq_by_type_intent(prompt) and df_sph is not None:
     render_frequency_by_type(df_sph)
