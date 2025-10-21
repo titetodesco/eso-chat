@@ -1213,7 +1213,7 @@ if md2:
             #f"- Idioma inferido: {lang.upper()}",
             (f"- Location: {', '.join(sph_loc_selected)}" if sph_loc_selected else "- Location: (sem filtro)"),
             (f"- Description contém: '{sph_desc_contains}'" if sph_desc_contains else "- Description contém: (vazio)"),
-            f"- WS/Prec/CP retornados: {len(dict_matches['ws'])}/{len(dict_matches['prec'])}/{len(dict_matches['cp'])}"
+         #   f"- WS/Prec/CP retornados: {len(dict_matches['ws'])}/{len(dict_matches['prec'])}/{len(dict_matches['cp'])}"
         ]
         with st.chat_message("assistant"):
             render_stats_section("Estatísticas principais geradas", per_source, extra)
