@@ -23,7 +23,70 @@ from datetime import datetime, timedelta
 
 # ---------- Contexto (system prompt) ----------
 CONTEXT_MD_REL_PATH = Path(__file__).parent / "docs" / "contexto_eso_chat.md"
-DATASETS_CONTEXT_FILE = "datasets_context.md"  # opcional
+DATASETS_CONTEXT_FILE = os.path.join("data", "docs", "datasets_context.md")
+if os.path.exists(DATASETS_CONTEXT_FILE):
+    try:
+        with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
+            msgs.append({"role": "system", "content": f.read()})
+    except Exception:
+        pass
+
+from pathlib import Path
+import re
+
+PROMPTS_MD_PATH = Path("data/prompts/prompts.md")
+
+@st.cache_data(show_spinner=False)
+def load_prompts_md(md_path: Path):
+    """
+    Lê data/prompts/prompts.md e retorna:
+    {
+      "Texto":  [{"title": "1) ...", "body": "..."} , ...],
+      "Upload": [{"title": "1) ...", "body": "..."} , ...]
+    }
+    Regras:
+      - Seções: '## Texto' e '## Upload'
+      - Items: '### <n>) <título>' seguidos do corpo até o próximo '###' ou '##'
+    """
+    if not md_path.exists():
+        return {"Texto": [], "Upload": []}
+
+    raw = md_path.read_text(encoding="utf-8")
+
+    # Quebra por grandes seções
+    sections = re.split(r"(?m)^##\s+", raw)
+    data = {"Texto": [], "Upload": []}
+    for sec in sections:
+        sec = sec.strip()
+        if not sec:
+            continue
+        # primeira linha = nome da seção (Texto/Upload)
+        first_line, _, rest = sec.partition("\n")
+        section_name = first_line.strip()
+        if section_name not in ("Texto", "Upload"):
+            continue
+
+        # Itens "###"
+        parts = re.split(r"(?m)^###\s+", rest)
+        for p in parts:
+            p = p.strip()
+            if not p:
+                continue
+            title_line, _, body = p.partition("\n")
+            title_line = title_line.strip()
+            # limpa numeração, mas mantém no título exibido
+            title = title_line
+            body = body.strip()
+            data[section_name].append({"title": title, "body": body})
+
+    # Ordena por prefixo numérico se houver (1), 2), etc.)
+    def _key(x):
+        m = re.match(r"^(\d+)\)", x["title"])
+        return int(m.group(1)) if m else 9999
+    for k in data:
+        data[k].sort(key=_key)
+    return data
+
 
 @st.cache_data(show_spinner=False)
 def load_file_text(p: Path) -> str:
@@ -49,9 +112,37 @@ if "system_prompt" not in st.session_state:
 if st.sidebar.button("Recarregar contexto (.md)"):
     st.session_state.system_prompt = build_system_prompt()
     st.sidebar.success("Contexto recarregado.")
+    
+# ===== Assistente de Prompts =====
+st.sidebar.subheader("Assistente de Prompts")
+prompts_bank = load_prompts_md(PROMPTS_MD_PATH)
+
+# Escolha do tipo
+prompt_type = st.sidebar.selectbox("Tipo de análise", options=["Texto", "Upload"], index=0)
+
+# Opções de prompt para o tipo escolhido
+titles = [it["title"] for it in prompts_bank.get(prompt_type, [])]
+if not titles:
+    st.sidebar.info("Nenhum prompt encontrado em {} (seção {}).".format(PROMPTS_MD_PATH, prompt_type))
+else:
+    selected_title = st.sidebar.selectbox("Modelo de prompt", options=titles, index=0, key="prompt_title_{}".format(prompt_type))
+    # Recupera corpo
+    selected = next((it for it in prompts_bank[prompt_type] if it["title"] == selected_title), None)
+    body = selected["body"] if selected else ""
+
+    # Coloca o corpo do prompt no rascunho (session_state)
+    if "draft_prompt" not in st.session_state:
+        st.session_state.draft_prompt = ""
+
+    if st.sidebar.button("Carregar no rascunho", use_container_width=True):
+        st.session_state["draft_prompt"] = body
+        st.sidebar.success("Modelo carregado no rascunho (edite antes de enviar).")
+        st.rerun()
 
 # ---------- Config básica ----------
 st.set_page_config(page_title="ESO • CHAT (Embeddings)", page_icon="💬", layout="wide")
+
+_user_has_prompt = bool(st.session_state.get("chat")) or bool(st.session_state.get("pending_user_prompt"))
 
 DATA_DIR = "data"
 AN_DIR = os.path.join(DATA_DIR, "analytics")
@@ -201,6 +292,124 @@ def chunk_text(text: str, max_chars=1200, overlap=200):
         start = max(0, end - ov)
     return parts
 
+def _safe_unpacked(item):
+    """Aceita (label, sim) ou (label, sim, suporte). Retorna (label:str, sim:float, support:int|None)."""
+    try:
+        if isinstance(item, (list, tuple)):
+            if len(item) >= 3:
+                return str(item[0]), float(item[1]), int(item[2])
+            if len(item) >= 2:
+                return str(item[0]), float(item[1]), None
+        return str(item), None, None
+    except Exception:
+        return str(item), None, None
+
+def _profile_flags(mode: str):
+    if mode == "Investigação":
+        return dict(show_hits=True, show_dicts=True, show_stats=True, tone="investigativo")
+    if mode == "Aprendizado":
+        return dict(show_hits=False, show_dicts=True, show_stats=False, tone="didatico")
+    if mode == "Métricas":
+        return dict(show_hits=False, show_dicts=False, show_stats=True, tone="metricas")
+    if mode == "Comportamento":
+        return dict(show_hits=False, show_dicts=True, show_stats=False, tone="comportamental")
+    # Auto
+    return dict(show_hits=True, show_dicts=True, show_stats=True, tone="equilibrado")
+
+def render_dict_tables(dict_matches, md2):
+    """
+    Anexa em md2 as três tabelas: WS / Precursores / CP, de forma robusta.
+    - Se houver 'suporte' (coluna 3), adiciona a coluna automaticamente.
+    - Se a lista estiver vazia, escreve 'Nenhum ≥ limiar.' em vez de quebrar.
+    """
+    if dict_matches is None:
+        dict_matches = {"ws": [], "prec": [], "cp": []}
+
+    # ---------- WS ----------
+    md2 += [
+        "",
+        "**WS (≥ limiar, calculado no app)**",
+    ]
+    ws = dict_matches.get("ws") or []
+    if ws:
+        md2 += [
+            "| Rank | Termo | Similaridade |",
+            "|---:|---|---:|",
+        ]
+        has_sup = any(isinstance(x, (list, tuple)) and len(x) >= 3 for x in ws)
+        if has_sup:
+            md2[-2] = "| Rank | Termo | Similaridade | Suporte |"
+            md2[-1] = "|---:|---|---:|---:|"
+
+        for r, item in enumerate(ws, 1):
+            label, s, sup = _safe_unpacked(item)
+            if s is None:
+                md2.append(f"| {r} | {label} |  |")
+            else:
+                if has_sup and sup is not None:
+                    md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
+                else:
+                    md2.append(f"| {r} | {label} | {s:.3f} |")
+    else:
+        md2 += ["Nenhum WS ≥ limiar."]
+
+    # ---------- Precursores ----------
+    md2 += [
+        "",
+        "**Precursores (≥ limiar, calculado no app)**",
+    ]
+    prec = dict_matches.get("prec") or []
+    if prec:
+        md2 += [
+            "| Rank | Termo | Similaridade |",
+            "|---:|---|---:|",
+        ]
+        has_sup = any(isinstance(x, (list, tuple)) and len(x) >= 3 for x in prec)
+        if has_sup:
+            md2[-2] = "| Rank | Termo | Similaridade | Suporte |"
+            md2[-1] = "|---:|---|---:|---:|"
+
+        for r, item in enumerate(prec, 1):
+            label, s, sup = _safe_unpacked(item)
+            if s is None:
+                md2.append(f"| {r} | {label} |  |")
+            else:
+                if has_sup and sup is not None:
+                    md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
+                else:
+                    md2.append(f"| {r} | {label} | {s:.3f} |")
+    else:
+        md2 += ["Nenhum Precursor ≥ limiar."]
+
+    # ---------- CP ----------
+    md2 += [
+        "",
+        "**CP (≥ limiar, calculado no app)**",
+    ]
+    cp = dict_matches.get("cp") or []
+    if cp:
+        md2 += [
+            "| Rank | Fator | Similaridade |",
+            "|---:|---|---:|",
+        ]
+        has_sup = any(isinstance(x, (list, tuple)) and len(x) >= 3 for x in cp)
+        if has_sup:
+            md2[-2] = "| Rank | Fator | Similaridade | Suporte |"
+            md2[-1] = "|---:|---|---:|---:|"
+
+        for r, item in enumerate(cp, 1):
+            label, s, sup = _safe_unpacked(item)
+            if s is None:
+                md2.append(f"| {r} | {label} |  |")
+            else:
+                if has_sup and sup is not None:
+                    md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
+                else:
+                    md2.append(f"| {r} | {label} | {s:.3f} |")
+    else:
+        md2 += ["Nenhum Fator CP ≥ limiar."]
+
+
 # --- Heurística de idioma (PT/EN) ---
 def guess_lang(text: str) -> str:
     if not text:
@@ -287,12 +496,6 @@ CP_NPZ = os.path.join(AN_DIR, "cp_embeddings.npz")
 CP_LBL_PARQ = os.path.join(AN_DIR, "cp_labels.parquet")
 
 def load_dict_bank(npz_path: str, labels_parquet: str):
-    """
-    Carrega embeddings (npz) e labels (parquet) para um dicionário.
-    Tenta primeiro no caminho informado; se falhar, tenta no ALT_DIR usando apenas o basename.
-    Exige consistência de tamanho entre E e labels.
-    """
-    # Primário
     E = load_npz_embeddings(npz_path)
     labels = None
     if os.path.exists(labels_parquet):
@@ -300,37 +503,8 @@ def load_dict_bank(npz_path: str, labels_parquet: str):
             labels = pd.read_parquet(labels_parquet)
         except Exception:
             labels = None
-
-    # Fallback no ALT_DIR (se necessário)
-    if (E is None or labels is None or (labels is not None and E is not None and len(labels) != E.shape[0])):
-        base_npz = os.path.basename(npz_path)
-        base_lbl = os.path.basename(labels_parquet)
-        npz_alt  = os.path.join(ALT_DIR, base_npz)
-        lbl_alt  = os.path.join(ALT_DIR, base_lbl)
-
-        if E is None and os.path.exists(npz_alt):
-            E = load_npz_embeddings(npz_alt)
-        if labels is None and os.path.exists(lbl_alt):
-            try:
-                labels = pd.read_parquet(lbl_alt)
-            except Exception:
-                labels = None
-
-    # Validação final
-    if E is None or labels is None:
-        try:
-            st.warning(f"[Dicionários] Arquivos não encontrados ou ilegíveis: {npz_path} / {labels_parquet}")
-        except Exception:
-            pass
+    if E is None or labels is None or len(labels) != E.shape[0]:
         return None, None
-
-    if len(labels) != E.shape[0]:
-        try:
-            st.warning(f"[Dicionários] Mismatch de tamanho: labels={len(labels)} vs embeddings={E.shape[0]}")
-        except Exception:
-            pass
-        return None, None
-
     return E, labels
 
 def select_ws_bank(lang: str):
@@ -345,31 +519,6 @@ def select_prec_bank(lang: str):
 
 def select_cp_bank():
     return load_dict_bank(CP_NPZ, CP_LBL_PARQ)
-
-def get_sphera_location_col(df: pd.DataFrame) -> str | None:
-    """
-    Retorna a coluna correta para 'Location' na Sphera, por ordem de preferência:
-    1) LOCATION
-    2) Location
-    3) FPSO
-    4) FPSO/Unidade
-    5) Unidade
-    """
-    if df is None:
-        return None
-    preferred = ["LOCATION", "Location", "FPSO", "FPSO/Unidade", "Unidade"]
-    fallback  = ["AREA", "Area", "Setor"]
-    for c in preferred:
-        if c in df.columns:
-            return c
-    for c in fallback:
-        if c in df.columns:
-            st.warning(
-                "⚠️ Usando '{}' como fallback de Location (colunas LOCATION/FPSO/Location ausentes)."
-                .format(c)
-            )
-            return c
-    return None
 
 # ---------- Funções de embeddings ----------
 
@@ -390,11 +539,101 @@ def encode_texts(texts: list[str], batch_size: int = 64) -> np.ndarray:
     ).astype(np.float32)
     return M
 
+
+def aggregate_dict_matches_over_hits(
+    hits, lang: str,
+    thr_ws: float, thr_prec: float, thr_cp: float,
+    topn_ws: int, topn_prec: int, topn_cp: int,
+    agg_mode: str = "max",
+    per_event_thr: float = 0.30,
+    min_support: int = 2,
+):
+    """
+    WS/Precursores/CP somente dos dicionários embutidos vs DESCRIPTIONS dos hits Sphera.
+    Agrega por 'max' ou 'mean', aplica limiar por evento e suporte mínimo.
+    Retorna dict com listas de tuplas (label, sim, suporte).
+    """
+    try:
+        if not hits:
+            return {"ws": [], "prec": [], "cp": []}
+
+        descs = []
+        for _, _, row in hits:
+            d = str(row.get("Description", row.get("DESCRIPTION", ""))).strip()
+            if d:
+                descs.append(d)
+        if not descs:
+            return {"ws": [], "prec": [], "cp": []}
+
+        V_desc = encode_texts(descs, batch_size=32)  # (M, D)
+        V_desc_T = V_desc.T
+
+        def _score_bank(E_bank, labels_df, thr_global, topn_target):
+            if E_bank is None or labels_df is None or len(labels_df) != E_bank.shape[0]:
+                return []
+            S = (E_bank @ V_desc_T)  # (N_terms x M_events)
+            support = (S >= per_event_thr).sum(axis=1)
+            sims = S.mean(axis=1) if agg_mode == "mean" else S.max(axis=1)
+            mask = (support >= min_support) & (sims >= thr_global)
+            idx = np.where(mask)[0]
+            if idx.size == 0:
+                return []
+            order = idx[np.argsort(sims[idx])[::-1]]
+            out = []
+            for i in order[:topn_target]:
+                label = str(labels_df.iloc[i].get("label", labels_df.iloc[i].get("text", f"TERM_{i}")))
+                out.append((label, float(sims[i]), int(support[i])))
+            return out
+
+        E_ws, L_ws = select_ws_bank(lang)
+        E_pr, L_pr = select_prec_bank(lang)
+        E_cp, L_cp = select_cp_bank()
+
+        return {
+            "ws":  _score_bank(E_ws, L_ws, thr_ws,  topn_ws),
+            "prec": _score_bank(E_pr, L_pr, thr_prec, topn_prec),
+            "cp":  _score_bank(E_cp, L_cp, thr_cp,  topn_cp),
+        }
+    except Exception as e:
+        try:
+            st.warning(f"[Dict/Hits] Falha ao agregar dicionários sobre hits: {e}")
+        except Exception:
+            pass
+        return {"ws": [], "prec": [], "cp": []}
+
+
 def encode_query(q: str) -> np.ndarray:
     ensure_st_encoder()
     v = st.session_state.st_encoder.encode([q], convert_to_numpy=True, normalize_embeddings=True)[0].astype(np.float32)
     v /= (np.linalg.norm(v) + 1e-9)
     return v
+
+def get_sphera_location_col(df: pd.DataFrame) -> str | None:
+    """
+    Retorna a coluna correta para 'Location' na Sphera, por ordem de preferência:
+    1) LOCATION
+    2) FPSO
+    3) Location
+    4) FPSO/Unidade
+    5) Unidade
+    (Só cai para AREA/Setor se nada acima existir — e avisa no UI.)
+    """
+    if df is None:
+        return None
+    preferred = ["LOCATION", "FPSO", "Location", "FPSO/Unidade", "Unidade"]
+    fallback  = ["AREA", "Area", "Setor"]
+    for c in preferred:
+        if c in df.columns:
+            return c
+    for c in fallback:
+        if c in df.columns:
+            st.warning(
+                "⚠️ Usando '{}' como fallback de Location (colunas LOCATION/FPSO/Location ausentes)."
+                .format(c)
+            )
+            return c
+    return None
+
 
 # ---------- Sidebar ----------
 st.sidebar.header("Configurações")
@@ -421,10 +660,10 @@ apply_time_filter = st.sidebar.checkbox("Sphera: filtrar últimos N anos", True)
 years_back = st.sidebar.slider("N (anos)", 1, 10, 3, 1)
 
 st.sidebar.subheader("Limiares de Similaridade (0–1)")
-thr_sphera = st.sidebar.slider("Limiar Sphera (Description — cos sim)", 0.0, 1.0, 0.45, 0.01)
-thr_ws     = st.sidebar.slider("Limiar WS", 0.0, 1.0, 0.50, 0.01)
-thr_prec   = st.sidebar.slider("Limiar Precursores", 0.0, 1.0, 0.50, 0.01)
-thr_cp     = st.sidebar.slider("Limiar CP", 0.0, 1.0, 0.50, 0.01)
+thr_sphera = st.sidebar.slider("Limiar Sphera (Description — cos sim)", 0.0, 1.0, 0.25, 0.01)
+thr_ws     = st.sidebar.slider("Limiar WS", 0.0, 1.0, 0.25, 0.01)
+thr_prec   = st.sidebar.slider("Limiar Precursores", 0.0, 1.0, 0.25, 0.01)
+thr_cp     = st.sidebar.slider("Limiar CP", 0.0, 1.0, 0.25, 0.01)
 
 use_catalog = st.sidebar.checkbox("Injetar datasets_context.md", True)
 
@@ -463,9 +702,14 @@ with c1:
         st.session_state.upld_meta = []
         st.session_state.upld_emb = None
         st.session_state.pop("last_upload_digest", None)
+        st.rerun()
 with c2:
     if st.button("Limpar chat", use_container_width=True):
         st.session_state.chat = []
+        st.session_state.pop("pending_user_prompt", None)  # evita reenvio automático
+        st.session_state["draft_prompt"] = ""              # zera rascunho
+        st.rerun()
+
 
 # ---------- Indexação de Uploads ----------
 if uploaded_files:
@@ -673,6 +917,7 @@ def render_interpretation_via_model(prompt: str, context_hint: str):
         )}
     ]
     try:
+        msgs.append({"role":"user","content":"Importante: NÃO gere novas listas de WS, Precursores ou Fatores CP; apenas interprete as tabelas calculadas pelo app (embeddings dos dicionários sobre as DESCRIPTIONS dos eventos Sphera recuperados)."})
         resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
         return resp.get("message", {}).get("content", "").strip()
     except Exception as e:
@@ -788,6 +1033,21 @@ def search_all(query: str) -> list[str]:
     blocks.sort(key=lambda x: -x[0])
     return [b for _, b in blocks]
 
+
+def _send_prompt_to_chat():
+    text_to_send = (st.session_state.get("draft_prompt") or "").strip()
+    if not text_to_send:
+        return
+    # adiciona ao histórico como 'user'
+    if "chat" not in st.session_state:
+        st.session_state.chat = []
+    st.session_state.chat.append({"role": "user", "content": text_to_send})
+    # sinaliza para o pipeline do chat processar após o rerun
+    st.session_state["pending_user_prompt"] = text_to_send
+    # limpa o rascunho
+    st.session_state["draft_prompt"] = ""
+    st.rerun()
+
 # ---------- UI ----------
 st.title("ESO • CHAT — HIST + UPLD (Embeddings preferencial) + Dicionários PT/EN")
 st.caption("RAG local (Sphera / GoSee / Docs / Upload) + WS/Precursores/CP com seleção automática de idioma.")
@@ -797,8 +1057,69 @@ for m in st.session_state.chat:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
 
-prompt = st.chat_input("Digite sua pergunta…")
 
+# === Saída – Dicionários (WS/Prec/CP) ===
+st.sidebar.markdown("### Saída – Dicionários (WS/Prec/CP)")
+topn_ws  = st.sidebar.slider("Top-N WS", 3, 50, 10, 1)
+topn_prec = st.sidebar.slider("Top-N Precursores", 3, 50, 10, 1)
+topn_cp  = st.sidebar.slider("Top-N CP", 3, 50, 10, 1)
+st.sidebar.markdown("**Agregação sobre eventos recuperados (Sphera)**")
+agg_mode = st.sidebar.selectbox("Como agregar similaridade por termo", ["max", "mean"], index=0)
+per_event_thr = st.sidebar.slider("Limiar por evento (dicionários)", 0.0, 1.0, 0.30, 0.01)
+min_support = st.sidebar.slider("Suporte mínimo (nº de eventos)", 1, 10, 2, 1)
+st.sidebar.markdown("### Modo de Saída")
+output_mode = st.sidebar.selectbox("Layout do resultado", ["Auto", "Investigação", "Aprendizado", "Comportamento", "Métricas"], index=0)
+_flags = _profile_flags(output_mode)
+
+
+
+def _is_freq_by_type_intent(text: str) -> bool:
+    t = (text or "").lower()
+    keys = ["frequência", "frequencia", "frequency", "freq", "por tipo", "event type", "observation", "near miss", "incident"]
+    return any(k in t for k in keys)
+
+def render_frequency_by_type(df_sph):
+    type_cols = ["event_type", "EVENT_TYPE", "tipo", "Tipo", "TYPE"]
+    col = next((c for c in type_cols if c in df_sph.columns), None)
+    if not col:
+        st.warning("Não encontrei coluna de tipo de evento (ex.: event_type).")
+        return
+
+    s = df_sph[col].astype(str).str.strip().str.lower()
+    map_alias = {
+        "observation": "Observation",
+        "near miss": "Near Miss",
+        "incident": "Incident",
+        "incidente": "Incident",
+        "quase acidente": "Near Miss",
+        "observação": "Observation",
+    }
+    s = s.map(lambda x: map_alias.get(x, x.title()))
+
+    freq = s.value_counts().rename_axis("Tipo").reset_index(name="Contagem")
+    total = int(freq["Contagem"].sum()) if not freq.empty else 0
+    if total == 0:
+        st.info("Não há eventos na base para calcular frequência por tipo.")
+        return
+    freq["Proporção"] = (freq["Contagem"] / total).round(3)
+
+    md = []
+    md += ["**Frequência por tipo (Sphera)**", ""]
+    md += ["| Tipo | Contagem | Proporção |", "|---|---:|---:|"]
+    for _, r in freq.iterrows():
+        md.append(f"| {r['Tipo']} | {int(r['Contagem'])} | {r['Proporção']:.3f} |")
+
+    out = "\n".join(md)
+    with st.chat_message("assistant"):
+        st.markdown(out)
+    st.session_state.chat.append({"role": "assistant", "content": out})
+
+prompt = st.chat_input("Digite sua pergunta ou cole seu texto")
+if prompt and _is_freq_by_type_intent(prompt) and df_sph is not None:
+    render_frequency_by_type(df_sph)
+    prompt = None
+if not prompt and "pending_user_prompt" in st.session_state:
+    prompt = st.session_state.pop("pending_user_prompt")
 if prompt:
     st.session_state.chat.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -840,52 +1161,55 @@ if prompt:
             st.session_state.chat.append({"role": "assistant", "content": msg})
 
         # 2) Dicionários (WS / Precursores / CP)
-        dict_matches = match_from_dicts(query_text, lang, thr_ws, thr_prec, thr_cp, topk=50)
-        md2 = []
-        if dict_matches["ws"]:
-            md2.append("**WS (≥ limiar, calculado no app)**")
-            md2.append("| Rank | Termo | Similaridade |")
-            md2.append("|---:|---|---:|")
-            for r, (label, s) in enumerate(dict_matches["ws"], 1):
-                md2.append(f"| {r} | {label} | {s:.3f} |")
-        if dict_matches["prec"]:
-            md2.append("**Precursores (≥ limiar, calculado no app)**")
-            md2.append("| Rank | Termo | Similaridade |")
-            md2.append("|---:|---|---:|")
-            for r, (label, s) in enumerate(dict_matches["prec"], 1):
-                md2.append(f"| {r} | {label} | {s:.3f} |")
-        if dict_matches["cp"]:
-            md2.append("**CP (≥ limiar, calculado no app)**")
-            md2.append("| Rank | Fator | Similaridade |")
-            md2.append("|---:|---|---:|")
-            for r, (label, s) in enumerate(dict_matches["cp"], 1):
-                md2.append(f"| {r} | {label} | {s:.3f} |")
 
-        if md2:
-            out2 = "".join(md2)
-            with st.chat_message("assistant"):
-                st.markdown(out2)
-            st.session_state.chat.append({"role": "assistant", "content": out2})
+# 2) Dicionários (WS / Precursores / CP) — renderização robusta
+try:
+    _dm = dict_matches
+except NameError:
+    _dm = {"ws": [], "prec": [], "cp": []}
 
+# Garante a lista acumuladora de markdown
+md2 = []
+
+# Renderização robusta das três tabelas a partir de _dm
+if _user_has_prompt and _flags.get("show_dicts", True):
+    render_dict_tables(_dm, md2)
+    if md2:
+        out2 = "\n".join(md2)
+        with st.chat_message("assistant"):
+            st.markdown(out2)
+        st.session_state.chat.append({"role": "assistant", "content": out2})
+    
+        years = years_back if apply_time_filter else None
+            
         # 3) Comentário do LLM sobre os resultados (sem buscar fora)
         msgs = [{"role": "system", "content": st.session_state.system_prompt}]
         if use_catalog and os.path.exists(DATASETS_CONTEXT_FILE):
             try:
-                with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
-                    msgs.append({"role": "system", "content": f.read()})
+                 with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
+                     msgs.append({"role": "system", "content": f.read()})
             except Exception:
-                pass
-        msgs.append({"role": "user", "content": f"Explique, sem buscar outras fontes, os resultados calculados no app. Limiar Sphera={thr_sphera}, anos={'todos' if not years else years}."})
-        msgs.append({
-          "role": "user",
-          "content": (
-              "Regra obrigatória (Sphera): Location deve vir da coluna LOCATION, "
-              "ou do campo FPSO quando LOCATION não existir; nunca usar AREA como Location. "
-              "Se a coluna não existir nos blocos, retornar 'N/D'."
-          )
+                 pass
+            msgs.append({"role": "user", "content": f"Explique, sem buscar outras fontes, os resultados calculados no app. Limiar Sphera={thr_sphera}, anos={'todos' if not years else years}."})
+            msgs.append({
+            "role": "user",
+            "content": (
+                "Regra obrigatória (Sphera): Location deve vir da coluna LOCATION, "
+                "nunca usar AREA como Location. "
+            )
         })
-
-
+        msgs.append({
+            "role": "user",
+            "content": (
+              "Formate a saída em três seções separadas com tabelas Markdown, sem texto entre elas, "
+              "seguindo exatamente o padrão do contexto: "
+              "1) **WS (≥ limiar, calculado no app)**, 2) **Precursores (≥ limiar, calculado no app)**, "
+              "3) **CP (≥ limiar, calculado no app)**. "
+              "Use cabeçalho de tabela e 3 casas decimais na similaridade. "
+              "Se uma categoria não tiver itens, escreva ‘Nenhum <categoria> ≥ limiar.’"
+            )
+        })
+    
         with st.chat_message("assistant"):
             with st.spinner("Consultando o modelo (análise explicativa)…"):
                 try:
@@ -895,8 +1219,9 @@ if prompt:
                     content = f"[Comentário do modelo indisponível] {e}"
                 st.markdown(content)
         st.session_state.chat.append({"role": "assistant", "content": content})
-
+    
         # 4) SUMÁRIO
+        hits = []
         if show_summary:
             sims = [s for _, s, _ in hits] if hits else []
             per_source = {
@@ -908,110 +1233,169 @@ if prompt:
             extra = [
                 f"- Filtro temporal: {'sem filtro' if years is None else f'últimos {years} anos'}",
                 f"- Limiar de similaridade aplicado: {thr_sphera:.2f}",
-                f"- Idioma inferido: {lang.upper()}",
+                #f"- Idioma inferido: {lang.upper()}",
                 (f"- Location: {', '.join(sph_loc_selected)}" if sph_loc_selected else "- Location: (sem filtro)"),
                 (f"- Description contém: '{sph_desc_contains}'" if sph_desc_contains else "- Description contém: (vazio)"),
-                f"- WS/Prec/CP retornados: {len(dict_matches['ws'])}/{len(dict_matches['prec'])}/{len(dict_matches['cp'])}",
+             #   f"- WS/Prec/CP retornados: {len(dict_matches['ws'])}/{len(dict_matches['prec'])}/{len(dict_matches['cp'])}"
             ]
+            _dm = locals().get("dict_matches", {"ws": [], "prec": [], "cp": []})
+            extra.append(
+               f"- WS/Prec/CP retornados: {len(_dm.get('ws', []))}/{len(_dm.get('prec', []))}/{len(_dm.get('cp', []))}"
+            )
+    
             with st.chat_message("assistant"):
-                render_stats_section("Estatísticas principais geradas", per_source, extra)
-                render_visual_layout_example()
+                # =======================
+                # 1) ACERTO DE ESTATÍSTICAS
+                # =======================
+                # Usa 'sims' como verdade terreno para "Sphera: N itens"
+                _sph_n = len(sims) if sims is not None else 0
+            
+                # Garante que per_source['sphera'] exista e reflita _sph_n
+                per_source["sphera"] = per_source.get("sphera", {})
+                per_source["sphera"]["n"] = _sph_n
+            
+                # Se a consulta é somente Sphera, esconda fontes zeradas para não poluir
+                per_source_clean = {k: v for k, v in per_source.items() if (k == "sphera") or (v.get("n", 0) > 0)}
+            
+                if _user_has_prompt and _flags.get("show_stats", True):
+                    render_stats_section("Estatísticas principais geradas", per_source_clean, extra)
+            
+                # =======================
+                # 2) (OPCIONAL) REMOVER VISUALIZAÇÕES-EXEMPLO
+                # =======================
+                # Você comentou que isso "não agrega" e polui a saída.
+                # Então comente/retire a linha abaixo:
+                # render_visual_layout_example()
+            
+                # =======================
+                # 3) INTERPRETAÇÃO VIA MODELO (com TABELA embutida quando houver hits)
+                # =======================
                 if summary_via_model:
-                    context_hint = f"Sphera hits={len(sims)}, thr={thr_sphera}, years={'all' if years is None else years}"
+                    # Monta uma pequena tabela markdown apenas com os Top-N (sem função nova)
+                    sph_table_md = ""
+                    if _sph_n > 0:
+                        top = min(10, _sph_n)  # ajuste se quiser mais/menos linhas
+                        lines = ["| EVENT_ID | Similaridade | LOCATION | Descrição |", "|---|---:|---|---|"]
+                        # 'sims' deve estar no formato que você já usa (tipicamente lista de tuplas (sim, idx, row))
+                        for t in sims[:top]:
+                            try:
+                                # Aceita (sim, idx, row) ou dicionário semelhante
+                                if isinstance(t, (list, tuple)) and len(t) >= 3:
+                                    sim_val, _, row = t[0], t[1], t[2]
+                                else:
+                                    # fallback para formatos alternativos
+                                    sim_val = float(t.get("Similarity", 0.0))
+                                    row = t
+            
+                                # row pode ser dict (df.iloc[idx].to_dict()) ou objeto com atributos
+                                get = row.get if isinstance(row, dict) else lambda k, d="": getattr(row, k, d)
+            
+                                eid = str(get("EVENT_ID", ""))
+                                loc = str(get("LOCATION", ""))
+                                desc = str(get("Description", "")).replace("\n", " ").strip()[:240]
+                                lines.append(f"| {eid} | {float(sim_val):.3f} | {loc} | {desc} |")
+                            except Exception:
+                                continue
+                        sph_table_md = "\n".join(lines)
+            
+                    # Texto claro e coerente sobre filtros
+                    _yrs_txt = "all" if (years in (None, "all")) else str(years)
+                    try:
+                        _thr_txt = f"{float(thr_sphera):.2f}"
+                    except Exception:
+                        _thr_txt = str(thr_sphera)
+            
+                    # Contexto enviado ao modelo: números certos + TABELA quando há resultados
+                    context_hint = f"Sphera hits={_sph_n}, thr={_thr_txt}, years={_yrs_txt}"
+                    if sph_table_md:
+                        context_hint += "\n\nEVENTOS Sphera (Top-N):\n" + sph_table_md
+            
+                    # Agora sim chamamos o modelo com contexto útil. Sem pedir desculpas.
                     interp = render_interpretation_via_model(prompt, context_hint)
-                else:
-                    interp = (
-                        "- Similaridades indicam proximidade textual com descrições Sphera;"
-                        "- Ajuste de limiar pode aumentar precisão (↑) ou abrangência (↓);"
-                        "- Verificar manualmente top eventos;"
-                        "- Revisar WS/Precursores/CP com maior similaridade para ações preventivas."
-                    )
-                st.markdown("**4. Interpretação dos resultados (exemplo típico)**" + interp)
-
-                stats_text = "".join(extra)
-                if summary_via_model:
-                    desc = render_descriptive_summary_via_model(prompt, stats_text)
-                else:
-                    desc = (
-                        "Foram retornados eventos do Sphera acima do limiar de similaridade definido, "
-                        "considerando o escopo e filtros aplicados. As correspondências em WS, "
-                        "Precursores e CP reforçam a leitura contextual e subsidiam decisões de risco."
-                    )
-                st.markdown("**Resumo descritivo da consulta**" + desc)
-
     else:
-        # -------- Fluxo RAG “clássico” --------
-        blocks = search_all(prompt)
-        up_raw = get_upload_raw(upload_raw_max)
-        if up_raw:
-            blocks = [f"[UPLOAD_RAW]{up_raw}"] + blocks
-
-        msgs = [{"role": "system", "content": st.session_state.system_prompt}]
-        if use_catalog and os.path.exists(DATASETS_CONTEXT_FILE):
-            try:
-                with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
-                    msgs.append({"role": "system", "content": f.read()})
-            except Exception:
-                pass
-
-        if blocks:
-            ctx = "".join(blocks)
-            msgs.append({"role": "user", "content": f"CONTEXTOS (HIST + UPLOAD):{ctx}"})
-            msgs.append({"role": "user", "content": f"PERGUNTA: {prompt}"})
-        else:
-            msgs.append({"role": "user", "content": prompt})
-
-        with st.chat_message("assistant"):
-            with st.spinner("Consultando o modelo…"):
+            # -------- Fluxo RAG “clássico” --------
+            blocks = search_all(prompt)
+            up_raw = get_upload_raw(upload_raw_max)
+            if up_raw:
+                blocks = [f"[UPLOAD_RAW]{up_raw}"] + blocks
+    
+            msgs = [{"role": "system", "content": st.session_state.system_prompt}]
+            if use_catalog and os.path.exists(DATASETS_CONTEXT_FILE):
                 try:
-                    resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
-                    content = resp.get("message", {}).get("content", "").strip() or json.dumps(resp)[:1200]
-                except Exception as e:
-                    content = f"Falha ao consultar o modelo: {e}"
-                st.markdown(content)
-        st.session_state.chat.append({"role": "assistant", "content": content})
-
-        # SUMÁRIO
-        if show_summary:
-            blocks_wo_raw = [b for b in blocks if not b.startswith("[UPLOAD_RAW]")]
-            per_source = parse_blocks(blocks_wo_raw)
-            extra = [
-                f"- Top-K: Sphera={k_sph}, GoSee={k_gos}, Docs={k_his}, Upload={k_upl}",
-                f"- Limiar WS/Prec/CP: {thr_ws:.2f}/{thr_prec:.2f}/{thr_cp:.2f}",
-                f"- Idioma inferido: {lang.upper()}",
-                (f"- Location: {', '.join(sph_loc_selected)}" if sph_loc_selected else "- Location: (sem filtro)"),
-                (f"- Description contém: '{sph_desc_contains}'" if sph_desc_contains else "- Description contém: (vazio)"),
-                f"- Uploads indexados: {len(st.session_state.upld_texts)} chunks" if st.session_state.upld_texts else "- Sem uploads no contexto",
-            ]
+                    with open(DATASETS_CONTEXT_FILE, "r", encoding="utf-8") as f:
+                        msgs.append({"role": "system", "content": f.read()})
+                except Exception:
+                    pass
+    
+            if blocks:
+                ctx = "".join(blocks)
+                msgs.append({"role": "user", "content": f"CONTEXTOS (HIST + UPLOAD):{ctx}"})
+                msgs.append({"role": "user", "content": f"PERGUNTA: {prompt}"})
+            else:
+                msgs.append({"role": "user", "content": prompt})
+    
             with st.chat_message("assistant"):
-                render_stats_section("Estatísticas principais geradas", per_source, extra)
-                render_visual_layout_example()
-                if summary_via_model:
-                    context_hint = (
-                        f"Sphera n={per_source['Sphera']['count']} avg={_agg_sims(per_source['Sphera']['sims'])['avg']}; "
-                        f"GoSee n={per_source['GoSee']['count']}; Docs n={per_source['Docs']['count']}; "
-                        f"Upload n={per_source['Upload']['count']}"
-                    )
-                    interp = render_interpretation_via_model(prompt, context_hint)
-                else:
-                    interp = (
-                        "- Resultados agregam múltiplas fontes com base em similaridade;"
-                        "- Priorize itens com maior similaridade do cosseno e origem Sphera;"
-                        "- Use WS/Prec/CP como apoio a ações corretivas/preventivas;"
-                        "- Ajuste Top-K/limiares para refinar o escopo."
-                    )
-                st.markdown("**4. Interpretação dos resultados (exemplo típico)**" + interp)
+                with st.spinner("Consultando o modelo…"):
+                    try:
+                        resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
+                        content = resp.get("message", {}).get("content", "").strip() or json.dumps(resp)[:1200]
+                    except Exception as e:
+                        content = f"Falha ao consultar o modelo: {e}"
+                    st.markdown(content)
+            st.session_state.chat.append({"role": "assistant", "content": content})
+    
+            # SUMÁRIO
+            if show_summary:
+                blocks_wo_raw = [b for b in blocks if not b.startswith("[UPLOAD_RAW]")]
+                per_source = parse_blocks(blocks_wo_raw)
+                extra = [
+                    f"- Top-K: Sphera={k_sph}, GoSee={k_gos}, Docs={k_his}, Upload={k_upl}",
+                    f"- Limiar WS/Prec/CP: {thr_ws:.2f}/{thr_prec:.2f}/{thr_cp:.2f}",
+                    f"- Idioma inferido: {lang.upper()}",
+                    (f"- Location: {', '.join(sph_loc_selected)}" if sph_loc_selected else "- Location: (sem filtro)"),
+                    (f"- Description contém: '{sph_desc_contains}'" if sph_desc_contains else "- Description contém: (vazio)"),
+                    f"- Uploads indexados: {len(st.session_state.upld_texts)} chunks" if st.session_state.upld_texts else "- Sem uploads no contexto",
+                ]
+                with st.chat_message("assistant"):
+                    render_stats_section("Estatísticas principais geradas", per_source, extra)
+                    render_visual_layout_example()
+                    if summary_via_model:
+                        context_hint = (
+                            f"Sphera n={per_source['Sphera']['count']} avg={_agg_sims(per_source['Sphera']['sims'])['avg']}; "
+                            f"GoSee n={per_source['GoSee']['count']}; Docs n={per_source['Docs']['count']}; "
+                            f"Upload n={per_source['Upload']['count']}"
+                        )
+                        interp = render_interpretation_via_model(prompt, context_hint)
+                    else:
+                        interp = (
+                            "- Resultados agregam múltiplas fontes com base em similaridade;"
+                            "- Priorize itens com maior similaridade do cosseno e origem Sphera;"
+                            "- Use WS/Prec/CP como apoio a ações corretivas/preventivas;"
+                            "- Ajuste Top-K/limiares para refinar o escopo."
+                        )
+                    st.markdown("**4. Interpretação dos resultados (exemplo típico)**" + interp)
+    
+                    stats_text = "".join(extra)
+                    if summary_via_model:
+                        desc = render_descriptive_summary_via_model(prompt, stats_text)
+                    else:
+                        desc = (
+                            "A consulta integrou Sphera, GoSee, Docs e Uploads segundo os Top-K e filtros definidos. "
+                            "As similaridades mais altas (cosseno) indicam proximidade textual e relevância operacional. "
+                            "Ajustes de limiar/Top-K podem ampliar ou reduzir a abrangência."
+                        )
+                    st.markdown("**Resumo descritivo da consulta**" + desc)
 
-                stats_text = "".join(extra)
-                if summary_via_model:
-                    desc = render_descriptive_summary_via_model(prompt, stats_text)
-                else:
-                    desc = (
-                        "A consulta integrou Sphera, GoSee, Docs e Uploads segundo os Top-K e filtros definidos. "
-                        "As similaridades mais altas (cosseno) indicam proximidade textual e relevância operacional. "
-                        "Ajustes de limiar/Top-K podem ampliar ou reduzir a abrangência."
-                    )
-                st.markdown("**Resumo descritivo da consulta**" + desc)
+st.markdown("### 📝 Rascunho do prompt (edite antes de enviar)")
+st.caption("Dica: cole o seu texto do evento onde indicado; se for usar upload, envie os arquivos na barra lateral antes de enviar.")
+
+draft = st.text_area("Conteúdo do prompt", height=220, key="draft_prompt")
+
+c_a, c_c = st.columns([1,3])
+with c_a:
+    st.button("Enviar para o chat", use_container_width=True, on_click=_send_prompt_to_chat)
+# (sem botão de limpar — o _send_prompt_to_chat já limpa o rascunho)
+
 
 # ---------- Painel / Diagnóstico ----------
 debug = st.sidebar.checkbox("Mostrar painel de diagnóstico", False)
@@ -1052,3 +1436,45 @@ if debug:
                 st.write(f"{disp}: {ver}")
             except Exception as e:
                 st.write(f"{disp}: não instalado ({e})")
+
+
+def _is_freq_by_type_intent(text: str) -> bool:
+    t = (text or "").lower()
+    keys = ["frequência", "frequencia", "frequency", "freq", "por tipo", "event type", "observation", "near miss", "incident"]
+    return any(k in t for k in keys)
+
+def render_frequency_by_type(df_sph):
+    type_cols = ["event_type", "EVENT_TYPE", "tipo", "Tipo", "TYPE"]
+    col = next((c for c in type_cols if c in df_sph.columns), None)
+    if not col:
+        st.warning("Não encontrei coluna de tipo de evento (ex.: event_type).")
+        return
+
+    s = df_sph[col].astype(str).str.strip().str.lower()
+    map_alias = {
+        "observation": "Observation",
+        "near miss": "Near Miss",
+        "incident": "Incident",
+        "incidente": "Incident",
+        "quase acidente": "Near Miss",
+        "observação": "Observation",
+    }
+    s = s.map(lambda x: map_alias.get(x, x.title()))
+
+    freq = s.value_counts().rename_axis("Tipo").reset_index(name="Contagem")
+    total = int(freq["Contagem"].sum()) if not freq.empty else 0
+    if total == 0:
+        st.info("Não há eventos na base para calcular frequência por tipo.")
+        return
+    freq["Proporção"] = (freq["Contagem"] / total).round(3)
+
+    md = []
+    md += ["**Frequência por tipo (Sphera)**", ""]
+    md += ["| Tipo | Contagem | Proporção |", "|---|---:|---:|"]
+    for _, r in freq.iterrows():
+        md.append(f"| {{r['Tipo']}} | {{int(r['Contagem'])}} | {{r['Proporção']:.3f}} |")
+
+    out = "\\n".join(md)
+    with st.chat_message("assistant"):
+        st.markdown(out)
+    st.session_state.chat.append({{"role": "assistant", "content": out}})
