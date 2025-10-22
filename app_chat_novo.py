@@ -346,6 +346,31 @@ def select_prec_bank(lang: str):
 def select_cp_bank():
     return load_dict_bank(CP_NPZ, CP_LBL_PARQ)
 
+def get_sphera_location_col(df: pd.DataFrame) -> str | None:
+    """
+    Retorna a coluna correta para 'Location' na Sphera, por ordem de preferência:
+    1) LOCATION
+    2) Location
+    3) FPSO
+    4) FPSO/Unidade
+    5) Unidade
+    """
+    if df is None:
+        return None
+    preferred = ["LOCATION", "Location", "FPSO", "FPSO/Unidade", "Unidade"]
+    fallback  = ["AREA", "Area", "Setor"]
+    for c in preferred:
+        if c in df.columns:
+            return c
+    for c in fallback:
+        if c in df.columns:
+            st.warning(
+                "⚠️ Usando '{}' como fallback de Location (colunas LOCATION/FPSO/Location ausentes)."
+                .format(c)
+            )
+            return c
+    return None
+
 # ---------- Funções de embeddings ----------
 
 def ensure_st_encoder():
@@ -396,10 +421,10 @@ apply_time_filter = st.sidebar.checkbox("Sphera: filtrar últimos N anos", True)
 years_back = st.sidebar.slider("N (anos)", 1, 10, 3, 1)
 
 st.sidebar.subheader("Limiares de Similaridade (0–1)")
-thr_sphera = st.sidebar.slider("Limiar Sphera (Description — cos sim)", 0.0, 1.0, 0.25, 0.01)
-thr_ws     = st.sidebar.slider("Limiar WS", 0.0, 1.0, 0.25, 0.01)
-thr_prec   = st.sidebar.slider("Limiar Precursores", 0.0, 1.0, 0.25, 0.01)
-thr_cp     = st.sidebar.slider("Limiar CP", 0.0, 1.0, 0.25, 0.01)
+thr_sphera = st.sidebar.slider("Limiar Sphera (Description — cos sim)", 0.0, 1.0, 0.45, 0.01)
+thr_ws     = st.sidebar.slider("Limiar WS", 0.0, 1.0, 0.50, 0.01)
+thr_prec   = st.sidebar.slider("Limiar Precursores", 0.0, 1.0, 0.50, 0.01)
+thr_cp     = st.sidebar.slider("Limiar CP", 0.0, 1.0, 0.50, 0.01)
 
 use_catalog = st.sidebar.checkbox("Injetar datasets_context.md", True)
 
@@ -489,32 +514,6 @@ def apply_advanced_filters(base: pd.DataFrame) -> pd.DataFrame:
         if desc_col:
             d = d[d[desc_col].astype(str).str.contains(pat, case=False, na=False)]
     return d
-
-def get_sphera_location_col(df: pd.DataFrame) -> str | None:
-    """
-    Retorna a coluna correta para 'Location' na Sphera, por ordem de preferência:
-    1) LOCATION
-    2) FPSO
-    3) Location
-    4) FPSO/Unidade
-    5) Unidade
-    (Só cai para AREA/Setor se nada acima existir — e avisa no UI.)
-    """
-    if df is None:
-        return None
-    preferred = ["LOCATION", "FPSO", "Location", "FPSO/Unidade", "Unidade"]
-    fallback  = ["AREA", "Area", "Setor"]
-    for c in preferred:
-        if c in df.columns:
-            return c
-    for c in fallback:
-        if c in df.columns:
-            st.warning(
-                "⚠️ Usando '{}' como fallback de Location (colunas LOCATION/FPSO/Location ausentes)."
-                .format(c)
-            )
-            return c
-    return None
 
 def sphera_similar_to_text(query_text: str, min_sim: float, years: int | None = None, topk: int = 50):
     """Retorna [(event_id, sim, row)] com sim >= min_sim (cosine), usando Sphera/Description e filtros avançados."""
