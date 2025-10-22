@@ -1,45 +1,33 @@
 
-# app_chat_novo.py — ESO • CHAT (modelo-first, com Sphera + WS/Precursores/CP)
-# Requisitos implementados nesta versão:
-# 1) Corrige contagem de Sphera/WS/Precursores/CP (sem zeros falsos).
-# 2) Remove opção "Injetar datasets_context.md" — agora é sempre injetado.
-# 3) Botões "Limpar chat" e "Limpar uploads" com st.experimental_rerun().
-# 4) Remove "Modo de Saída" e qualquer estatística fixa gerada pelo app.
-#    O modelo faz a síntese/insights (a aplicação só prepara contexto).
-# 5) Na lateral, em Upload, mantém apenas "Tamanho máx. de UPLOAD_RAW (chars)".
-#    Chunk size/overlap ficam fixos no código (padrões conservadores).
-# 6) Mantém "Filtros avançados – Sphera" e "Agregação sobre eventos".
-#    Corrige "Description contém (substring)" (case-insensitive, regex escapado).
-#
-# Observação: esta versão é auto-contida. Lê embeddings e labels de:
-#   data/analytics/*.npz / *.parquet  (com fallback para /mnt/data/*)
-# Espera-se que existam (na sua instalação):
-#   - sphera_embeddings.npz  +  sphera.parquet
-#   - ws_embeddings_pt.npz + ws_embeddings_pt.parquet (ou _en.* se desejar)
-#   - prec_embeddings_pt.npz + prec_embeddings_pt.parquet
-#   - cp_embeddings.npz + cp_labels.parquet
-#
-# Licença: uso interno do projeto.
+# -*- coding: utf-8 -*-
+# app_chat_novo.py — ESO • CHAT (modelo-first, com Sphera + Dicionários)
+# - Corrige contagens Sphera/WS/Precursores/CP (agregação sobre hits).
+# - Remove "Modo de Saída" e estatísticas fixas (modelo faz a síntese).
+# - Injeção SEMPRE de docs/contexto_eso_chat.md (sem checkbox).
+# - Sidebar Upload: apenas "Tamanho máx. de UPLOAD_RAW (chars)".
+# - Mantém Assistente de Prompts (Texto/Upload) + rascunho.
+# - Mantém Filtros avançados – Sphera + Agregação sobre eventos.
+# - "Description contém" corrigido (case-insensitive, regex escapado).
+# - "Limpar chat" e "Limpar uploads" com rerun.
 
 import os
-import io
 import re
-import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import streamlit as st
 import requests
+import streamlit as st
 
-# ============= Config =============
-st.set_page_config(page_title="ESO • CHAT (modelo-first)", page_icon="💬", layout="wide")
+# ========================== Config inicial ==========================
+st.set_page_config(page_title="ESO • CHAT", page_icon="💬", layout="wide")
 
 DATA_DIR = "data"
 AN_DIR   = os.path.join(DATA_DIR, "analytics")
 ALT_DIR  = "/mnt/data"  # fallback
-CONTEXT_MD_REL_PATH = Path("docs") / "contexto_eso_chat.md"
+DOCS_DIR = Path("docs")
+CONTEXT_MD_REL_PATH = DOCS_DIR / "contexto_eso_chat.md"
 PROMPTS_MD_PATH     = Path("data/prompts/prompts.md")
 
 # Modelo (chat)
@@ -51,7 +39,7 @@ HEADERS_JSON   = {"Authorization": f"Bearer {OLLAMA_API_KEY}", "Content-Type": "
 # Embeddings
 ST_MODEL_NAME = os.getenv("ST_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
 
-# ============= Helpers base =============
+# ========================== Helpers base ==========================
 def _fatal(msg: str):
     st.error(msg)
     st.stop()
@@ -71,6 +59,7 @@ def load_npz_embeddings(path: str) -> np.ndarray | None:
         return None
     try:
         with np.load(path, allow_pickle=True) as z:
+            # chaves comuns
             for key in ("embeddings", "E", "X", "vectors", "vecs"):
                 if key in z:
                     E = np.array(z[key]).astype(np.float32, copy=False)
@@ -129,6 +118,7 @@ def load_file_text(p: Path) -> str:
         return f"[AVISO] Não consegui ler {p}: {e} (Prosseguindo sem esse contexto.)"
 
 def build_system_prompt() -> str:
+    # SEMPRE injetar datasets_contexto.md (contexto_eso_chat.md)
     pre = (
         "Você é o ESO-CHAT para segurança operacional (óleo e gás). "
         "Responda em PT-BR, cite IDs/similaridade quando usar buscas locais, "
@@ -146,7 +136,7 @@ def ollama_chat(messages, model=None, temperature=0.2, stream=False, timeout=120
     r.raise_for_status()
     return r.json()
 
-# Estado
+# ========================== Estado ==========================
 if "system_prompt" not in st.session_state:
     st.session_state.system_prompt = build_system_prompt()
 if "chat" not in st.session_state:
@@ -162,11 +152,10 @@ if "upld_emb" not in st.session_state:
 if "st_encoder" not in st.session_state:
     st.session_state.st_encoder = None
 
-# ============= Encoder =============
+# ========================== Encoder ==========================
 def ensure_st_encoder():
     if st.session_state.st_encoder is None:
         try:
-            from sentence_transformers import SentenceTransformer
             st.session_state.st_encoder = SentenceTransformer(ST_MODEL_NAME)
         except Exception as e:
             _fatal(f"❌ Não foi possível carregar o encoder: {e}")
@@ -185,7 +174,7 @@ def encode_query(q: str) -> np.ndarray:
     v /= (np.linalg.norm(v) + 1e-9)
     return v
 
-# ============= Dados Sphera & Dicionários =============
+# ========================== Dados Sphera & Dicionários ==========================
 SPH_EMB_PATH = os.path.join(AN_DIR, "sphera_embeddings.npz")
 SPH_PQ_PATH  = os.path.join(AN_DIR, "sphera.parquet")
 
@@ -197,7 +186,7 @@ if os.path.exists(SPH_PQ_PATH):
     except Exception as e:
         st.warning(f"Falha ao ler {SPH_PQ_PATH}: {e}")
 
-# Dicionários (PT por padrão; se desejar EN, duplique abaixo)
+# Dicionários (PT por padrão)
 WS_PT_NPZ        = os.path.join(AN_DIR, "ws_embeddings_pt.npz")
 WS_PT_LBL_PARQ   = os.path.join(AN_DIR, "ws_embeddings_pt.parquet")
 PREC_PT_NPZ      = os.path.join(AN_DIR, "prec_embeddings_pt.npz")
@@ -232,67 +221,13 @@ def load_dict_bank(npz_path: str, labels_parquet: str):
         return None, None
     return E, labels
 
-E_ws, L_ws     = load_dict_bank(WS_PT_NPZ, WS_PT_LBL_PARQ)
+E_ws,   L_ws   = load_dict_bank(WS_PT_NPZ,   WS_PT_LBL_PARQ)
 E_prec, L_prec = load_dict_bank(PREC_PT_NPZ, PREC_PT_LBL_PARQ)
-E_cp, L_cp     = load_dict_bank(CP_NPZ, CP_LBL_PARQ)
+E_cp,   L_cp   = load_dict_bank(CP_NPZ,      CP_LBL_PARQ)
 
-# ============= Sidebar =============
-st.sidebar.subheader("Assistente de Prompts")
-prompts_bank = load_prompts_md(PROMPTS_MD_PATH)
-ptype = st.sidebar.selectbox("Tipo", options=["Texto", "Upload"], index=0)
-titles = [it["title"] for it in prompts_bank.get(ptype, [])]
-if titles:
-    sel = st.sidebar.selectbox("Modelo de prompt", options=titles, index=0)
-    body = next((it["body"] for it in prompts_bank[ptype] if it["title"] == sel), "")
-    if st.sidebar.button("Carregar no rascunho", use_container_width=True):
-        st.session_state.draft_prompt = body
-        st.sidebar.success("Modelo carregado no rascunho.")
-        st.experimental_rerun()
-else:
-    st.sidebar.info(f"Nenhum prompt encontrado em {PROMPTS_MD_PATH} ({ptype}).")
-
-st.sidebar.header("Configurações")
-st.sidebar.write("Host:", OLLAMA_HOST or "(não definido)")
-st.sidebar.write("Modelo:", OLLAMA_MODEL or "(não definido)")
-
-st.sidebar.subheader("Recuperação – Sphera")
-k_sph     = st.sidebar.slider("Top-K Sphera", 0, 50, 20, 1)
-thr_sph   = st.sidebar.slider("Limiar Sphera (cos)", 0.0, 1.0, 0.30, 0.01)
-apply_tf  = st.sidebar.checkbox("Filtrar últimos N anos", True)
-years_back = st.sidebar.slider("N (anos)", 1, 10, 3, 1)
-
-st.sidebar.subheader("Filtros avançados – Sphera")
-sph_desc_contains = st.sidebar.text_input("Description contém (substring)", "")
-sph_loc_selected  = st.sidebar.text_input("Filtrar LOCATION (lista separada por ;)", "")
-
-st.sidebar.subheader("Agregação sobre eventos recuperados (Sphera)")
-agg_mode     = st.sidebar.selectbox("Agregação", ["max", "mean"], index=0)
-per_ev_thr   = st.sidebar.slider("Limiar por evento (dicionários)", 0.0, 1.0, 0.30, 0.01)
-min_support  = st.sidebar.slider("Suporte mínimo (nº de eventos)", 1, 20, 2, 1)
-thr_ws       = st.sidebar.slider("Limiar global WS", 0.0, 1.0, 0.25, 0.01)
-thr_prec     = st.sidebar.slider("Limiar global Precursores", 0.0, 1.0, 0.25, 0.01)
-thr_cp       = st.sidebar.slider("Limiar global CP", 0.0, 1.0, 0.25, 0.01)
-topn_ws      = st.sidebar.slider("Top-N WS", 3, 90, 10, 1)
-topn_prec    = st.sidebar.slider("Top-N Precursores", 3, 90, 10, 1)
-topn_cp      = st.sidebar.slider("Top-N CP", 3, 90, 10, 1)
-
-st.sidebar.subheader("Upload")
-upload_raw_max = st.sidebar.slider("Tamanho máx. de UPLOAD_RAW (chars)", 300, 20000, 2500, 100)
-
-# Botões utilidade
-if st.sidebar.button("Limpar chat", use_container_width=True):
-    st.session_state.chat = []
-    st.experimental_rerun()
-if st.sidebar.button("Limpar uploads", use_container_width=True):
-    st.session_state.upld_texts = []
-    st.session_state.upld_meta  = []
-    st.session_state.upld_emb   = None
-    st.session_state.pop("last_upload_digest", None)
-    st.experimental_rerun()
-
-# ============= Funções Sphera =============
+# ========================== Funções Sphera e Filtros ==========================
 def get_sphera_location_col(df: pd.DataFrame) -> str | None:
-    """Preferência por LOCATION; fallback para AREA/Area/Setor.
+    """Preferência por LOCATION; fallback para AREA/Area/Setor."""
     if df is None:
         return None
     preferred = ["LOCATION", "Location", "LOCAL", "Local", "FPSO", "FPSO/Unidade", "Unidade"]
@@ -356,8 +291,11 @@ def sphera_similar_to_text(query_text: str, min_sim: float, years: int | None, t
         base = apply_advanced_filters(base, desc_contains, loc_list)
         E_view = E_sph
 
-    qv = encode_query(query_text)
-    sims = (E_view @ qv).astype(float)
+    # Query vector
+    if not (query_text or "").strip():
+        return []
+    vq = encode_query(query_text)
+    sims = (E_view @ vq).astype(float)
     ord_idx = np.argsort(-sims)
 
     id_col = "Event ID" if "Event ID" in base.columns else ("EVENT_NUMBER" if "EVENT_NUMBER" in base.columns else None)
@@ -376,7 +314,7 @@ def sphera_similar_to_text(query_text: str, min_sim: float, years: int | None, t
             break
     return out
 
-# ============= Agregação dicionários sobre hits Sphera =============
+# ========================== Agregação dicionários sobre hits ==========================
 def aggregate_dict_matches_over_hits(
     hits,
     E_ws, L_ws, E_prec, L_prec, E_cp, L_cp,
@@ -434,16 +372,80 @@ def aggregate_dict_matches_over_hits(
             pass
         return {"ws": [], "prec": [], "cp": []}
 
-# ============= UI central =============
+# ========================== Sidebar ==========================
+st.sidebar.subheader("Assistente de Prompts")
+prompts_bank = load_prompts_md(PROMPTS_MD_PATH)
+
+ptype = st.sidebar.selectbox("Tipo", options=["Texto", "Upload"], index=0, key="ptype_sel")
+titles = [it["title"] for it in prompts_bank.get(ptype, [])]
+if titles:
+    sel = st.sidebar.selectbox("Modelo de prompt", options=titles, index=0, key=f"sel_{ptype}")
+    body = next((it["body"] for it in prompts_bank[ptype] if it["title"] == sel), "")
+    if st.sidebar.button("Carregar no rascunho", use_container_width=True, key="btn_load_prompt"):
+        st.session_state.draft_prompt = body
+        st.sidebar.success("Modelo carregado no rascunho.")
+        st.experimental_rerun()
+else:
+    st.sidebar.info(f"Nenhum prompt encontrado em {PROMPTS_MD_PATH} ({ptype}).")
+
+st.sidebar.header("Configurações")
+st.sidebar.write("Host:", OLLAMA_HOST or "(não definido)")
+st.sidebar.write("Modelo:", OLLAMA_MODEL or "(não definido)")
+
+st.sidebar.subheader("Recuperação – Sphera")
+k_sph      = st.sidebar.slider("Top-K Sphera", 0, 50, 20, 1)
+thr_sph    = st.sidebar.slider("Limiar Sphera (cos)", 0.0, 1.0, 0.30, 0.01)
+apply_tf   = st.sidebar.checkbox("Filtrar últimos N anos", True)
+years_back = st.sidebar.slider("N (anos)", 1, 10, 3, 1)
+
+st.sidebar.subheader("Filtros avançados – Sphera")
+sph_desc_contains = st.sidebar.text_input("Description contém (substring)", "")
+sph_loc_selected  = st.sidebar.text_input("Filtrar LOCATION (lista separada por ;)", "")
+
+st.sidebar.subheader("Agregação sobre eventos recuperados (Sphera)")
+agg_mode     = st.sidebar.selectbox("Agregação", ["max", "mean"], index=0)
+per_ev_thr   = st.sidebar.slider("Limiar por evento (dicionários)", 0.0, 1.0, 0.30, 0.01)
+min_support  = st.sidebar.slider("Suporte mínimo (nº de eventos)", 1, 20, 2, 1)
+thr_ws       = st.sidebar.slider("Limiar global WS", 0.0, 1.0, 0.25, 0.01)
+thr_prec     = st.sidebar.slider("Limiar global Precursores", 0.0, 1.0, 0.25, 0.01)
+thr_cp       = st.sidebar.slider("Limiar global CP", 0.0, 1.0, 0.25, 0.01)
+topn_ws      = st.sidebar.slider("Top-N WS", 3, 90, 10, 1)
+topn_prec    = st.sidebar.slider("Top-N Precursores", 3, 90, 10, 1)
+topn_cp      = st.sidebar.slider("Top-N CP", 3, 90, 10, 1)
+
+st.sidebar.subheader("Upload")
+upload_raw_max = st.sidebar.slider("Tamanho máx. de UPLOAD_RAW (chars)", 300, 20000, 2500, 100)
+
+# utilidade
+c1, c2 = st.sidebar.columns(2)
+with c1:
+    if st.button("Limpar uploads", use_container_width=True, key="btn_clear_upl"):
+        st.session_state.upld_texts = []
+        st.session_state.upld_meta  = []
+        st.session_state.upld_emb   = None
+        st.session_state.pop("last_upload_digest", None)
+        try:
+            st.experimental_rerun()
+        except Exception:
+            st.rerun()
+with c2:
+    if st.button("Limpar chat", use_container_width=True, key="btn_clear_chat"):
+        st.session_state.chat = []
+        try:
+            st.experimental_rerun()
+        except Exception:
+            st.rerun()
+
+# ========================== UI central ==========================
 st.title("ESO • CHAT (modelo-first)")
 
-# Área de rascunho de prompt
-st.text_area("Conteúdo do prompt", key="draft_prompt", height=200, placeholder="Digite ou carregue um modelo de prompt...")
+# Rascunho de prompt
+st.text_area("Conteúdo do prompt", key="draft_prompt", height=180, placeholder="Digite ou carregue um modelo de prompt...")
 
-# Entrada de texto (consulta principal)
-user_text = st.text_area("Texto de análise (para Sphera)", height=220, placeholder="Cole aqui o relato/descrição do evento a analisar...")
+# Texto principal (para Sphera)
+user_text = st.text_area("Texto de análise (para Sphera)", height=200, placeholder="Cole aqui o relato/descrição do evento a analisar...")
 
-# Upload opcional (conteúdo bruto, com tamanho limitado)
+# Upload opcional (conteúdo bruto limitado)
 uploaded = st.file_uploader("Anexar arquivo (opcional)", type=["txt","md","pdf","docx","csv","xlsx"])
 if uploaded is not None:
     raw = uploaded.read()
@@ -458,31 +460,65 @@ if uploaded is not None:
         st.success(f"Upload recebido: {uploaded.name} (armazenado no contexto local).")
 
 col_run1, col_run2 = st.columns([1,1])
-go_btn = col_run1.button("Enviar para o chat", type="primary", use_container_width=True)
-clear_draft = col_run2.button("Limpar rascunho", use_container_width=True)
-
+go_btn      = col_run1.button("Enviar para o chat", type="primary", use_container_width=True, key="btn_send")
+clear_draft = col_run2.button("Limpar rascunho", use_container_width=True, key="btn_clear_draft")
 if clear_draft:
     st.session_state.draft_prompt = ""
-    st.experimental_rerun()
+    try:
+        st.experimental_rerun()
+    except Exception:
+        st.rerun()
 
-# ============= Execução =============
+# ========================== Execução ==========================
+def render_hits_table(hits, df_all):
+    if not hits:
+        return ""
+    lines = ["| Event ID | Similaridade | LOCATION | Descrição |", "|---|---:|---|---|"]
+    loc_col = get_sphera_location_col(df_all)
+    for evid, s, row in hits[:min(10, len(hits))]:
+        loc_val = str(row.get(loc_col, "")) if loc_col else ""
+        desc    = str(row.get("Description", row.get("DESCRIPTION", ""))).replace("\n", " ").strip()[:240]
+        lines.append(f"| {evid} | {s:.3f} | {loc_val} | {desc} |")
+    return "\n".join(lines)
+
+def messages_with_context(user_blocks: list[str]):
+    msgs = [{"role": "system", "content": st.session_state.system_prompt}]
+    if user_blocks:
+        msgs.append({"role": "user", "content": "\n\n".join(user_blocks)})
+    else:
+        msgs.append({"role": "user", "content": "Sem prompt ou texto. Explique como devo proceder."})
+    return msgs
+
+def push_model(messages, user_text_for_question: str, context_md: str):
+    messages.append({"role": "user", "content": "DADOS DE APOIO (não responda aqui):\n" + context_md})
+    qt = user_text_for_question or st.session_state.draft_prompt or "Analise os dados fornecidos e sintetize as lições aprendidas."
+    messages.append({"role": "user", "content": f"Pergunta: {qt}"})
+    try:
+        resp = ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False)
+        content = ""
+        if isinstance(resp, dict):
+            content = resp.get("message", {}).get("content", "") or resp.get("content", "")
+        if not content:
+            content = "(Sem conteúdo do modelo)"
+        with st.chat_message("assistant"):
+            st.markdown(content)
+        st.session_state.chat.append({"role": "assistant", "content": content})
+    except Exception as e:
+        st.error(f"Falha ao consultar modelo: {e}")
+
 if go_btn:
     # 1) Monta a mensagem do usuário (prompt draft + texto e/ou uploads)
     blocks = []
     if st.session_state.draft_prompt.strip():
         blocks.append("PROMPT:\n" + st.session_state.draft_prompt.strip())
-    if user_text.strip():
+    if (user_text or "").strip():
         blocks.append("TEXTO:\n" + user_text.strip())
     for i, t in enumerate(st.session_state.upld_texts or []):
         blocks.append(f"UPLOAD[{i+1}]:\n" + t.strip())
 
-    msgs = [{"role": "system", "content": st.session_state.system_prompt}]
-    if blocks:
-        msgs.append({"role": "user", "content": "\n\n".join(blocks)})
-    else:
-        msgs.append({"role": "user", "content": "Sem prompt ou texto. Explique como devo proceder."})
+    msgs = messages_with_context(blocks)
 
-    # 2) Busca Sphera (somente Sphera nesta versão)
+    # 2) Busca Sphera
     loc_list = [x.strip() for x in sph_loc_selected.split(";")] if sph_loc_selected.strip() else []
     hits = sphera_similar_to_text(
         query_text=user_text or st.session_state.draft_prompt,
@@ -495,19 +531,14 @@ if go_btn:
         loc_list=loc_list,
     )
 
-    # 3) Tabela de hits Sphera (se houver)
+    # 3) Mostra hits (Top-10)
+    table_md = ""
     if hits:
-        lines = ["| Event ID | Similaridade | LOCATION | Descrição |", "|---|---:|---|---|"]
-        for evid, s, row in hits[:min(10, len(hits))]:
-            loc_col = get_sphera_location_col(df_sph)
-            loc_val = str(row.get(loc_col, "")) if loc_col else ""
-            desc    = str(row.get("Description", row.get("DESCRIPTION", ""))).replace("\n", " ").strip()[:240]
-            lines.append(f"| {evid} | {s:.3f} | {loc_val} | {desc} |")
-        table_md = "\n".join(lines)
+        table_md = render_hits_table(hits, df_sph)
         st.markdown("**Eventos do Sphera (Top-10)**\n\n" + table_md)
         st.session_state.chat.append({"role": "assistant", "content": "Eventos Sphera listados."})
 
-    # 4) WS/Precursores/CP contra DESCRIPTIONS dos hits
+    # 4) WS/Precursores/CP (somente se houver hits)
     dict_matches = aggregate_dict_matches_over_hits(
         hits, E_ws, L_ws, E_prec, L_prec, E_cp, L_cp,
         thr_ws=thr_ws, thr_prec=thr_prec, thr_cp=thr_cp,
@@ -515,11 +546,8 @@ if go_btn:
         agg_mode=agg_mode, per_event_thr=per_ev_thr, min_support=min_support,
     )
 
-    # Renderiza tabelas (somente se houver hits)
     if hits:
         md2 = []
-
-        # WS
         if dict_matches["ws"]:
             md2 += [
                 "**WS (≥ limiar, calculado no app)**",
@@ -531,7 +559,6 @@ if go_btn:
         else:
             md2 += ["**WS (≥ limiar, calculado no app)**", "Nenhum WS ≥ limiar."]
 
-        # Precursores
         if dict_matches["prec"]:
             md2 += [
                 "",
@@ -544,7 +571,6 @@ if go_btn:
         else:
             md2 += ["", "**Precursores (≥ limiar, calculado no app)**", "Nenhum Precursor ≥ limiar."]
 
-        # CP
         if dict_matches["cp"]:
             md2 += [
                 "",
@@ -556,16 +582,14 @@ if go_btn:
                 md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
         else:
             md2 += ["", "**CP (≥ limiar, calculado no app)**", "Nenhum Fator CP ≥ limiar."]
-
         st.markdown("\n".join(md2))
 
-    # 5) Passa contexto real para o modelo (modelo faz a síntese)
-    #    Inclui a tabela de hits e o resumo dos dicionários como "dados de apoio".
+    # 5) Modelo faz a síntese
     ctx_chunks = []
     ctx_chunks.append(f"Sphera_hits={len(hits)}, thr_sph={thr_sph:.2f}, years={'all' if not apply_tf else years_back}")
     if hits:
-        ctx_chunks.append("HITS_TOP10_MD:\n" + table_md)
-        # resumo de dicts para o modelo
+        if table_md:
+            ctx_chunks.append("HITS_TOP10_MD:\n" + table_md)
         def _md(lst, header):
             if not lst:
                 return header + ": nenhum."
@@ -576,25 +600,9 @@ if go_btn:
         ctx_chunks.append(_md(dict_matches["cp"],   "CP selecionados"))
 
     model_context = "\n\n".join(ctx_chunks)
-    msgs.append({"role": "user", "content": "DADOS DE APOIO (não responda aqui):\n" + model_context})
+    push_model(msgs, user_text, model_context)
 
-    # 6) Envia pergunta final ao modelo: peça análise/síntese — a aplicação não gera conclusões fixas.
-    user_query = user_text or st.session_state.draft_prompt or "Analise os dados fornecidos e sintetize as lições aprendidas."
-    msgs.append({"role": "user", "content": f"Pergunta: {user_query}"})
-    try:
-        resp = ollama_chat(msgs, model=OLLAMA_MODEL, temperature=0.2, stream=False)
-        content = ""
-        if isinstance(resp, dict):
-            content = resp.get("message", {}).get("content", "") or resp.get("content", "")
-        if not content:
-            content = "(Sem conteúdo do modelo)"
-        with st.chat_message("assistant"):
-            st.markdown(content)
-        st.session_state.chat.append({"role": "assistant", "content": content})
-    except Exception as e:
-        st.error(f"Falha ao consultar modelo: {e}")
-
-# Render histórico simples
+# Histórico simples
 if st.session_state.chat:
     st.divider()
     st.subheader("Histórico")
