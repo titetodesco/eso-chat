@@ -806,6 +806,68 @@ if prompt:
                 st.markdown(msg)
             st.session_state.chat.append({"role": "assistant", "content": msg})
 
+def aggregate_dict_matches_over_hits(
+    hits, lang: str,
+    thr_ws: float, thr_prec: float, thr_cp: float,
+    topn_ws: int, topn_prec: int, topn_cp: int,
+    agg_mode: str = "max",
+    per_event_thr: float = 0.30,
+    min_support: int = 2,
+):
+    """
+    Compara dicionários embeddados (WS/Precursores/CP) contra as DESCRIPTIONS
+    dos eventos Sphera recuperados. Agrega por 'max' ou 'mean' e aplica
+    limiar por evento (per_event_thr) e suporte mínimo (min_support).
+    Retorna {'ws': [(label, sim, suporte), ...], 'prec': [...], 'cp': [...]}
+    """
+    try:
+        if not hits:
+            return {"ws": [], "prec": [], "cp": []}
+
+        # 1) Coletar descriptions dos hits
+        descs = []
+        for _, _, row in hits:
+            descs.append(str(row.get("Description", row.get("DESCRIPTION", ""))).strip())
+        descs = [d for d in descs if d]
+        if not descs:
+            return {"ws": [], "prec": [], "cp": []}
+
+        # 2) Embeddings das descriptions (M x D)
+        V_desc = encode_texts(descs, batch_size=32)
+        V_desc_T = V_desc.T
+
+        def _score_bank(E_bank, labels_df, thr_global, topn_target):
+            if E_bank is None or labels_df is None or len(labels_df) != E_bank.shape[0]:
+                return []
+            S = (E_bank @ V_desc_T)  # (N_terms x M_events)
+            support = (S >= per_event_thr).sum(axis=1)
+            sims = S.mean(axis=1) if agg_mode == "mean" else S.max(axis=1)
+            mask = (support >= min_support) & (sims >= thr_global)
+            idx = np.where(mask)[0]
+            if idx.size == 0:
+                return []
+            order = idx[np.argsort(sims[idx])[::-1]]
+            out = []
+            for i in order[:topn_target]:
+                label = str(labels_df.iloc[i].get("label", labels_df.iloc[i].get("text", f"TERM_{i}")))
+                out.append((label, float(sims[i]), int(support[i])))
+            return out
+
+        E_ws, L_ws = select_ws_bank(lang)
+        E_pr, L_pr = select_prec_bank(lang)
+        E_cp, L_cp = select_cp_bank()
+
+        return {
+            "ws":  _score_bank(E_ws, L_ws, thr_ws,  topn_ws),
+            "prec": _score_bank(E_pr, L_pr, thr_prec, topn_prec),
+            "cp":  _score_bank(E_cp, L_cp, thr_cp,  topn_cp),
+        }
+    except Exception as e:
+        try:
+            st.warning(f"[Dict/Hits] Falha ao agregar dicionários sobre hits: {e}")
+        except Exception:
+            pass
+        return {"ws": [], "prec": [], "cp": []}
         
 # 2) Dicionários (WS / Precursores / CP)
         # Só renderiza se houver hits
@@ -973,65 +1035,4 @@ if debug:
             except Exception as e:
                 st.write(f"{disp}: não instalado ({e})")
 # ============= Agregação (WS/Precursores/CP) sobre hits Sphera =============
-def aggregate_dict_matches_over_hits(
-    hits, lang: str,
-    thr_ws: float, thr_prec: float, thr_cp: float,
-    topn_ws: int, topn_prec: int, topn_cp: int,
-    agg_mode: str = "max",
-    per_event_thr: float = 0.30,
-    min_support: int = 2,
-):
-    """
-    Compara dicionários embeddados (WS/Precursores/CP) contra as DESCRIPTIONS
-    dos eventos Sphera recuperados. Agrega por 'max' ou 'mean' e aplica
-    limiar por evento (per_event_thr) e suporte mínimo (min_support).
-    Retorna {'ws': [(label, sim, suporte), ...], 'prec': [...], 'cp': [...]}
-    """
-    try:
-        if not hits:
-            return {"ws": [], "prec": [], "cp": []}
 
-        # 1) Coletar descriptions dos hits
-        descs = []
-        for _, _, row in hits:
-            descs.append(str(row.get("Description", row.get("DESCRIPTION", ""))).strip())
-        descs = [d for d in descs if d]
-        if not descs:
-            return {"ws": [], "prec": [], "cp": []}
-
-        # 2) Embeddings das descriptions (M x D)
-        V_desc = encode_texts(descs, batch_size=32)
-        V_desc_T = V_desc.T
-
-        def _score_bank(E_bank, labels_df, thr_global, topn_target):
-            if E_bank is None or labels_df is None or len(labels_df) != E_bank.shape[0]:
-                return []
-            S = (E_bank @ V_desc_T)  # (N_terms x M_events)
-            support = (S >= per_event_thr).sum(axis=1)
-            sims = S.mean(axis=1) if agg_mode == "mean" else S.max(axis=1)
-            mask = (support >= min_support) & (sims >= thr_global)
-            idx = np.where(mask)[0]
-            if idx.size == 0:
-                return []
-            order = idx[np.argsort(sims[idx])[::-1]]
-            out = []
-            for i in order[:topn_target]:
-                label = str(labels_df.iloc[i].get("label", labels_df.iloc[i].get("text", f"TERM_{i}")))
-                out.append((label, float(sims[i]), int(support[i])))
-            return out
-
-        E_ws, L_ws = select_ws_bank(lang)
-        E_pr, L_pr = select_prec_bank(lang)
-        E_cp, L_cp = select_cp_bank()
-
-        return {
-            "ws":  _score_bank(E_ws, L_ws, thr_ws,  topn_ws),
-            "prec": _score_bank(E_pr, L_pr, thr_prec, topn_prec),
-            "cp":  _score_bank(E_cp, L_cp, thr_cp,  topn_cp),
-        }
-    except Exception as e:
-        try:
-            st.warning(f"[Dict/Hits] Falha ao agregar dicionários sobre hits: {e}")
-        except Exception:
-            pass
-        return {"ws": [], "prec": [], "cp": []}
