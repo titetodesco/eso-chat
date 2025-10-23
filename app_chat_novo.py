@@ -405,7 +405,7 @@ if st.sidebar.button("Carregar no rascunho", use_container_width=True, key="btn_
         if body: draft.append(body)
     st.session_state.draft_prompt = ("\n\n".join(draft)).strip()
     st.sidebar.success("Modelo(s) carregado(s) no rascunho.")
-    st.experimental_rerun()
+    st.rerun()
 
 st.sidebar.header("Recuperação – Sphera")
 k_sph      = st.sidebar.slider("Top-K Sphera", 1, 100, 20, 1)
