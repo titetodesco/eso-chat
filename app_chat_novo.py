@@ -1,614 +1,739 @@
 # -*- coding: utf-8 -*-
 """
-app_chat_novo.py — FINAL (ESO • CHAT, Somente Sphera + Dicionários)
+app_chat_novo.py — Revisado e aprimorado
 
-Atende aos objetivos:
-- Corrige contagens: tabela de **Sphera** sempre reflete nº de hits; **WS/Precursores/CP** calculados apenas sobre os hits (agregação max/mean, limiar por evento, suporte mínimo). Evita zero indevido quando há hits (defaults mais permissivos e correções de filtro/colunas).
-- Remove qualquer toggle de “Injetar datasets_context.md” — o arquivo é SEMPRE injetado.
-- “Limpar uploads” e “Limpar chat” apenas zeram estado e fazem rerun **sem** disparar prompts.
-- Remove “Modo de Saída” e qualquer bloco fixo de resposta — a síntese é do modelo (via system + contexto).
-- Upload: **apenas** “Tamanho máx. de UPLOAD_RAW (chars)” (chunk/overlap ocultos e fixos internamente quando necessário).
-- Mantém **Filtros avançados – Sphera** e **Agregação sobre eventos recuperados (Sphera)**.
-- “Description contém (substring)” corrigido (case-insensitive, regex escapado, coluna correta).
-- Seletor de prompts: **dois combos simultâneos** (“Texto” e “Upload”) lidos de `data/prompts/prompts.md` + botão **“Carregar no rascunho”**; rascunho editável e botão **“Enviar para o chat”**.
-- Usa **somente** bancos existentes `.npz/.parquet` (Sphera + dicionários PT/EN). **Não** gera novos termos; usa labels existentes.
-- Location: usa **LOCATION**; se indisponível tenta **FPSO**, **Location**, **FPSO/Unidade**, **Unidade**. **Nunca** usa AREA como location; se nada existir, mostra **“N/D”**.
+Regras atendidas:
+- Mantém funcionalidades e reaproveita embeddings/datasets existentes (.npz/.parquet), sem regerar embeddings do corpus.
+- Usa somente Sphera (Description) para recuperação por similaridade do cosseno entre consulta OU trecho do upload e as DESCRIPTIONS.
+- Aplica filtros avançados (Location, substring em Description, limiar de similaridade, janela temporal – últimos N anos).
+- Contagens WS/Precursores/CP feitas APENAS com dicionários embutidos (npz/parquet) contra as DESCRIPTIONS dos eventos recuperados (agregação mean/max, limiar por evento e suporte mínimo).
+- Seletor de prompts (dois combos: "Texto" e "Upload") lendo de data/prompts/prompts.md; botão "Carregar no rascunho" preenche a caixa de conteúdo do prompt.
+- "Limpar chat" limpa histórico sem disparar inferência; "Limpar uploads" zera buffers, metadados e embeddings de upload.
+- Injeta datasets_context.md sempre no contexto do LLM (sem toggle).
+- "Description contém (substring)" é case-insensitive e filtra a coluna correta.
+- Remove visuais poluentes do fluxo padrão; depuração apenas via toggle.
+- Corrige ordem/escopo/indentação e padroniza funções antes das chamadas.
+- Evita heurísticas de UI fixas: síntese e interpretação ficam a cargo do LLM.
 
-Arquivos esperados:
-- `data/analytics/sphera_embeddings.npz` + `data/analytics/sphera.parquet`
-- Dicionários: `ws_embeddings_*.npz + .parquet`, `prec_embeddings_*.npz + .parquet`, `cp_embeddings.npz` + `cp_labels.parquet`
-- Contexto: `data/datasets_context.md` (sempre injetado) e, se existir, `docs/contexto_eso_chat.md` (complementar)
+Dependências:
+- streamlit>=1.32
+- pandas, numpy, pyarrow
+- openai (para embeddings/completion) — configure OPENAI_API_KEY
 
-Requisitos: `streamlit`, `pandas`, `numpy`, `sentence-transformers`, `requests`.
-Config de modelo: `OLLAMA_HOST`, `OLLAMA_MODEL` (e opcional `OLLAMA_API_KEY`).
+Estrutura de arquivos esperada (exemplos — ajuste aos seus caminhos reais):
+- data/sphera/sphera.parquet (colunas mín.: ['EventID','Description','Location','EventDate'] com EventDate em ISO/yyy-mm-dd)
+- data/sphera/sphera_embeddings.npz (keys: 'embeddings' (float32 [N,D]), 'index' (int64 ids alinhados ao parquet))
+- data/dicts/ws_cp_precursores.parquet ou .npz (ver loaders; deve conter termos/itens com colunas 'type' in {'WS','Precursor','CP'} e 'term' OU estruturas equivalentes)
+- data/prompts/prompts.md (seções ## Texto e ## Upload com itens ### Nome do prompt seguidos do conteúdo)
+- data/datasets_context.md (texto sempre injetado no system/context)
+
+Observação: este app NÃO rege gera embeddings do CORPUS. Apenas calcula embeddings de query/upload (permitido) para comparar com embeddings já gerados do Sphera.
 """
 
 import os
-import re
 import io
 import json
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-# ========================== Config inicial ==========================
-st.set_page_config(page_title="ESO • CHAT", page_icon="💬", layout="wide")
+# =============================
+# --------- Constantes --------
+# =============================
+APP_TITLE = "ESO-CHAT — Análise Sphera (RAG)"
+SPHERA_PARQUET_PATH = "data/sphera/sphera.parquet"
+SPHERA_EMBED_NPZ_PATH = "data/sphera/sphera_embeddings.npz"
+DICT_PATHS = [
+    "data/dicts/ws_cp_precursores.parquet",
+    "data/dicts/ws_cp_precursores.npz",
+]
+PROMPTS_MD_PATH = "data/prompts/prompts.md"
+DATASETS_CONTEXT_PATH = "data/datasets_context.md"
 
-DATA_DIR = "data"
-AN_DIR   = os.path.join(DATA_DIR, "analytics")
-ALT_DIR  = "/mnt/data"  # fallback em ambientes gerenciados
-DOCS_DIR = Path("docs")
-DATASETS_CONTEXT_PATH = Path("data/datasets_context.md")
-CONTEXTO_ESO_MD_PATH  = DOCS_DIR / "contexto_eso_chat.md"  # opcional complementar
-PROMPTS_MD_PATH       = Path("data/prompts/prompts.md")
+DEFAULT_EMBED_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
+DEFAULT_CHAT_MODEL = os.getenv("CHAT_MODEL", "gpt-4o")
 
-# Modelo (chat)
-OLLAMA_HOST    = st.secrets.get("OLLAMA_HOST", os.getenv("OLLAMA_HOST", ""))
-OLLAMA_MODEL   = st.secrets.get("OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", ""))
-OLLAMA_API_KEY = st.secrets.get("OLLAMA_API_KEY", os.getenv("OLLAMA_API_KEY"))
-HEADERS_JSON   = {"Authorization": f"Bearer {OLLAMA_API_KEY}", "Content-Type": "application/json"} if OLLAMA_API_KEY else {"Content-Type": "application/json"}
+# Chaves de session_state
+SS_LOADED = "loaded_ok"
+SS_CHAT = "chat_history"
+SS_UPLOAD_TEXT = "upload_text"
+SS_UPLOAD_META = "upload_meta"
+SS_UPLOAD_EMB = "upload_emb"
+SS_PROMPT_DRAFT = "prompt_draft"
+SS_LAST_RESULTS = "last_results_df"
+SS_LAST_MATCHES = "last_matches_idx"
+SS_DEBUG = "debug_mode"
 
-# Embeddings (Sentence-Transformers para query/upload; corpus já embutido em .npz)
-ST_MODEL_NAME = os.getenv("ST_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
+# =============================
+# ---------- Utilidades -------
+# =============================
 
-# ========================== Helpers base ==========================
-def _fatal(msg: str):
-    st.error(msg)
-    st.stop()
-
-try:
-    from sentence_transformers import SentenceTransformer
-except Exception as e:
-    _fatal(f"❌ sentence-transformers indisponível: {e}")
-
-@st.cache_resource(show_spinner=False)
-def ensure_st_encoder():
+def _safe_read_text(path: str) -> str:
     try:
-        return SentenceTransformer(ST_MODEL_NAME)
-    except Exception as e:
-        _fatal(f"❌ Não foi possível carregar o encoder: {e}")
-
-@st.cache_data(show_spinner=False)
-def load_npz_embeddings(path: str) -> Optional[np.ndarray]:
-    if not os.path.exists(path):
-        return None
-    try:
-        with np.load(path, allow_pickle=True) as z:
-            for key in ("embeddings", "E", "X", "vectors", "vecs"):
-                if key in z:
-                    E = np.array(z[key]).astype(np.float32, copy=False)
-                    # l2 normalize
-                    n = np.linalg.norm(E, axis=1, keepdims=True) + 1e-9
-                    return (E / n).astype(np.float32)
-            # fallback: maior matriz 2D
-            best_k, best_n = None, -1
-            for k in z.files:
-                arr = z[k]
-                if isinstance(arr, np.ndarray) and arr.ndim == 2 and arr.shape[0] > best_n:
-                    best_k, best_n = k, arr.shape[0]
-            if best_k is None:
-                st.warning(f"{os.path.basename(path)} não contém matriz 2D.")
-                return None
-            E = np.array(z[best_k]).astype(np.float32, copy=False)
-            n = np.linalg.norm(E, axis=1, keepdims=True) + 1e-9
-            return (E / n).astype(np.float32)
-    except Exception as e:
-        st.warning(f"Falha ao ler {path}: {e}")
-        return None
-
-@st.cache_data(show_spinner=False)
-def load_prompts_md(md_path: Path) -> Dict[str, List[Dict[str, str]]]:
-    """Retorna {"Texto": [{title,body}], "Upload": [{title,body}]} a partir de data/prompts/prompts.md."""
-    if not md_path.exists():
-        return {"Texto": [], "Upload": []}
-    raw = md_path.read_text(encoding="utf-8")
-    sections = re.split(r"(?m)^##\s+", raw)
-    data = {"Texto": [], "Upload": []}
-    for sec in sections:
-        sec = sec.strip()
-        if not sec:
-            continue
-        first, _, rest = sec.partition("\n")
-        if first.strip() not in ("Texto", "Upload"):
-            continue
-        parts = re.split(r"(?m)^###\s+", rest)
-        for p in parts:
-            p = p.strip()
-            if not p: continue
-            title, _, body = p.partition("\n")
-            data[first.strip()].append({"title": title.strip(), "body": body.strip()})
-    # Ordena por prefixo numérico "1) ..." se houver
-    def _k(x):
-        m = re.match(r"^(\d+)\)", x["title"])
-        return int(m.group(1)) if m else 9999
-    for k in data:
-        data[k].sort(key=_k)
-    return data
-
-@st.cache_data(show_spinner=False)
-def load_file_text(p: Path) -> str:
-    try:
-        return p.read_text(encoding="utf-8")
-    except Exception as e:
-        return f"[AVISO] Não consegui ler {p}: {e} (continuando sem este contexto)"
-
-def build_system_prompt() -> str:
-    """Injeta SEMPRE datasets_context.md; contexto_eso_chat.md é complementar (se existir)."""
-    pre = (
-        "Você é o ESO-CHAT para segurança operacional (óleo e gás). "
-        "Responda em PT-BR, cite IDs/similaridade quando usar buscas locais, "
-        "e não invente dados fora dos contextos fornecidos.\n\n"
-    )
-    ctx = []
-    if DATASETS_CONTEXT_PATH.exists():
-        ctx.append("=== DATASETS_CONTEXT ===\n" + load_file_text(DATASETS_CONTEXT_PATH))
-    if CONTEXTO_ESO_MD_PATH.exists():
-        ctx.append("=== CONTEXTO ESO-CHAT ===\n" + load_file_text(CONTEXTO_ESO_MD_PATH))
-    return pre + "\n\n".join(ctx)
-
-# ========================== Estado ==========================
-if "system_prompt" not in st.session_state:
-    st.session_state.system_prompt = build_system_prompt()
-if "chat" not in st.session_state:
-    st.session_state.chat = []
-if "draft_prompt" not in st.session_state:
-    st.session_state.draft_prompt = ""
-if "upld_texts" not in st.session_state:
-    st.session_state.upld_texts = []
-if "upld_meta" not in st.session_state:
-    st.session_state.upld_meta = []
-if "upld_emb" not in st.session_state:
-    st.session_state.upld_emb = None
-if "st_encoder" not in st.session_state:
-    st.session_state.st_encoder = ensure_st_encoder()
-
-# ========================== Encoder wrappers ==========================
-@st.cache_data(show_spinner=False)
-def encode_texts(texts: List[str], batch_size: int = 64) -> np.ndarray:
-    M = st.session_state.st_encoder.encode(
-        texts, batch_size=batch_size, show_progress_bar=False,
-        convert_to_numpy=True, normalize_embeddings=True
-    ).astype(np.float32)
-    return M
-
-@st.cache_data(show_spinner=False)
-def encode_query(q: str) -> np.ndarray:
-    v = st.session_state.st_encoder.encode([q], convert_to_numpy=True, normalize_embeddings=True)[0].astype(np.float32)
-    v /= (np.linalg.norm(v) + 1e-9)
-    return v
-
-# ========================== Dados Sphera & Dicionários ==========================
-SPH_EMB_PATH = os.path.join(AN_DIR, "sphera_embeddings.npz")
-SPH_PQ_PATH  = os.path.join(AN_DIR, "sphera.parquet")
-
-E_sph = load_npz_embeddings(SPH_EMB_PATH)
-df_sph = None
-if os.path.exists(SPH_PQ_PATH):
-    try:
-        df_sph = pd.read_parquet(SPH_PQ_PATH)
-    except Exception as e:
-        st.warning(f"Falha ao ler {SPH_PQ_PATH}: {e}")
-
-# Dicionários PT/EN
-WS_PT_NPZ, WS_PT_LBL_PARQ   = os.path.join(AN_DIR, "ws_embeddings_pt.npz"),   os.path.join(AN_DIR, "ws_embeddings_pt.parquet")
-WS_EN_NPZ, WS_EN_LBL_PARQ   = os.path.join(AN_DIR, "ws_embeddings_en.npz"),   os.path.join(AN_DIR, "ws_embeddings_en.parquet")
-PREC_PT_NPZ, PREC_PT_LBL_PARQ = os.path.join(AN_DIR, "prec_embeddings_pt.npz"), os.path.join(AN_DIR, "prec_embeddings_pt.parquet")
-PREC_EN_NPZ, PREC_EN_LBL_PARQ = os.path.join(AN_DIR, "prec_embeddings_en.npz"), os.path.join(AN_DIR, "prec_embeddings_en.parquet")
-CP_NPZ, CP_LBL_PARQ         = os.path.join(AN_DIR, "cp_embeddings.npz"),      os.path.join(AN_DIR, "cp_labels.parquet")
-
-@st.cache_data(show_spinner=False)
-def load_dict_bank(npz_path: str, labels_parquet: str):
-    E = load_npz_embeddings(npz_path)
-    labels = None
-    if os.path.exists(labels_parquet):
-        try: labels = pd.read_parquet(labels_parquet)
-        except Exception: labels = None
-    # fallback ALT_DIR
-    if (E is None or labels is None) and ALT_DIR:
-        npz_alt = os.path.join(ALT_DIR, os.path.basename(npz_path))
-        parq_alt = os.path.join(ALT_DIR, os.path.basename(labels_parquet))
-        if E is None and os.path.exists(npz_alt):
-            E = load_npz_embeddings(npz_alt)
-        if labels is None and os.path.exists(parq_alt):
-            try: labels = pd.read_parquet(parq_alt)
-            except Exception: labels = None
-    if E is None or labels is None or len(labels) != E.shape[0]:
-        st.warning(f"[Dicionários] Ausentes ou incompatíveis: {npz_path} / {labels_parquet}")
-        return None, None
-    return E, labels
-
-@st.cache_data(show_spinner=False)
-def select_ws_bank(lang: str):
-    if lang == "en" and os.path.exists(WS_EN_NPZ):
-        return load_dict_bank(WS_EN_NPZ, WS_EN_LBL_PARQ)
-    return load_dict_bank(WS_PT_NPZ, WS_PT_LBL_PARQ)
-
-@st.cache_data(show_spinner=False)
-def select_prec_bank(lang: str):
-    if lang == "en" and os.path.exists(PREC_EN_NPZ):
-        return load_dict_bank(PREC_EN_NPZ, PREC_EN_LBL_PARQ)
-    return load_dict_bank(PREC_PT_NPZ, PREC_PT_LBL_PARQ)
-
-@st.cache_data(show_spinner=False)
-def select_cp_bank():
-    return load_dict_bank(CP_NPZ, CP_LBL_PARQ)
-
-# ========================== Filtros Sphera ==========================
-
-def get_sphera_location_col(df: pd.DataFrame) -> Optional[str]:
-    """Preferir LOCATION; fallback para FPSO, Location, FPSO/Unidade, Unidade. NUNCA usar AREA/Setor.
-    Se nenhuma existir, retorna None (UI mostrará "N/D")."""
-    if df is None:
-        return None
-    preferred = ["LOCATION", "FPSO", "Location", "FPSO/Unidade", "Unidade"]
-    for c in preferred:
-        if c in df.columns:
-            return c
-    return None  # nunca cair para AREA
-
-@st.cache_data(show_spinner=False)
-def filter_sphera_by_date(df: pd.DataFrame, years: Optional[int]) -> pd.DataFrame:
-    if df is None or years is None or "EVENT_DATE" not in df.columns:
-        return df if df is not None else pd.DataFrame()
-    d = df.copy()
-    d["EVENT_DATE"] = pd.to_datetime(d["EVENT_DATE"], errors="coerce")
-    cutoff = pd.Timestamp(datetime.utcnow() - timedelta(days=365*years))
-    return d[d["EVENT_DATE"] >= cutoff]
-
-@st.cache_data(show_spinner=False)
-def apply_advanced_filters(base: pd.DataFrame, desc_contains: str, loc_list: List[str]) -> pd.DataFrame:
-    d = base if base is not None else pd.DataFrame()
-    # Location
-    loc_col = get_sphera_location_col(d)
-    if loc_col and loc_list:
-        sel = [x.strip() for x in loc_list if x and x.strip()]
-        d = d[d[loc_col].astype(str).isin(set(sel))]
-    # Description contém (case-insensitive, regex escapado) — coluna correta
-    desc_col = "Description" if "Description" in d.columns else ("DESCRIPTION" if "DESCRIPTION" in d.columns else None)
-    if desc_col and desc_contains:
-        pat = re.escape(desc_contains)
-        d = d[d[desc_col].astype(str).str.contains(pat, case=False, na=False, regex=True)]
-    return d
-
-# ========================== Similaridade Sphera ==========================
-
-def sphera_similar_to_text(query_text: str, min_sim: float, years: Optional[int], topk: int,
-                           df_sph: pd.DataFrame, E_sph: np.ndarray,
-                           desc_contains: str, loc_list: List[str]) -> List[Tuple[str, float, pd.Series]]:
-    """Retorna lista de (event_id, sim, row) para Sphera, respeitando filtros e limiar de cos-sim."""
-    if not query_text or df_sph is None or E_sph is None or E_sph.size == 0:
-        return []
-    base = df_sph
-    if years is not None:
-        base = filter_sphera_by_date(base, years)
-    base = apply_advanced_filters(base, desc_contains, loc_list)
-
-    # alinhar embeddings pelo índice filtrado (se índice for inteiro). Caso contrário, usar E_sph completo.
-    try:
-        idx_map = base.index.to_numpy()
-        if np.issubdtype(idx_map.dtype, np.integer):
-            E_view = E_sph[idx_map, :]
-        else:
-            raise TypeError
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
     except Exception:
-        E_view = E_sph
-        base = df_sph
-        if years is not None:
-            base = filter_sphera_by_date(base, years)
-        base = apply_advanced_filters(base, desc_contains, loc_list)
+        return ""
 
-    qv = encode_query(query_text)
-    sims = (E_view @ qv).astype(float)
-    ord_idx = np.argsort(-sims)
 
-    id_col = "Event ID" if "Event ID" in base.columns else ("EVENT_NUMBER" if "EVENT_NUMBER" in base.columns else None)
+def load_sphera() -> Tuple[pd.DataFrame, np.ndarray, np.ndarray]:
+    """Carrega Sphera parquet e embeddings NPZ.
 
-    out = []
-    kept = 0
-    for i in ord_idx:
-        s = float(sims[i])
-        if s < min_sim:
-            continue
-        row = base.iloc[int(i)]
-        evid = row.get(id_col, f"row{i}") if id_col else f"row{i}"
-        out.append((str(evid), s, row))
-        kept += 1
-        if kept >= topk:
+    Retorna:
+        df: DataFrame com pelo menos ['EventID','Description','Location','EventDate']
+        emb: ndarray shape [N, D]
+        idx: ndarray shape [N,] mapeando linhas do emb -> índice do df
+    """
+    if not os.path.exists(SPHERA_PARQUET_PATH):
+        st.error(f"Parquet do Sphera não encontrado em {SPHERA_PARQUET_PATH}")
+        return pd.DataFrame(), np.empty((0, 0), dtype=np.float32), np.empty((0,), dtype=np.int64)
+
+    df = pd.read_parquet(SPHERA_PARQUET_PATH)
+    # Normaliza colunas esperadas
+    expected_cols = {"EventID", "Description", "Location", "EventDate"}
+    missing = expected_cols - set(df.columns)
+    if missing:
+        st.warning(f"Parquet do Sphera está sem colunas: {missing} — a aplicação pode se limitar.")
+    # EventDate para datetime
+    if "EventDate" in df.columns:
+        df["EventDate"] = pd.to_datetime(df["EventDate"], errors="coerce")
+
+    # Embeddings
+    if not os.path.exists(SPHERA_EMBED_NPZ_PATH):
+        st.error(f"Embeddings do Sphera não encontrados em {SPHERA_EMBED_NPZ_PATH}")
+        return df, np.empty((0, 0), dtype=np.float32), np.empty((0,), dtype=np.int64)
+
+    npz = np.load(SPHERA_EMBED_NPZ_PATH)
+    emb = npz.get("embeddings")
+    idx = npz.get("index")
+    if emb is None or idx is None:
+        st.error("NPZ de embeddings do Sphera deve conter keys 'embeddings' e 'index'.")
+        return df, np.empty((0, 0), dtype=np.float32), np.empty((0,), dtype=np.int64)
+
+    # Garantias de tipo
+    emb = emb.astype(np.float32, copy=False)
+    idx = idx.astype(np.int64, copy=False)
+
+    if len(idx) != len(emb):
+        st.warning("Tamanho de 'index' diverge do de 'embeddings' no NPZ.")
+
+    return df, emb, idx
+
+
+def l2_normalize(x: np.ndarray) -> np.ndarray:
+    denom = np.linalg.norm(x, axis=-1, keepdims=True) + 1e-12
+    return x / denom
+
+
+def cosine_sim(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Retorna matriz/ vetor de similaridade coseno entre a e b já normalizados."""
+    return a @ b.T
+
+
+def embed_texts(texts: List[str], model: str = DEFAULT_EMBED_MODEL) -> np.ndarray:
+    """Gera embeddings para lista de textos (consulta ou upload)."""
+    from openai import OpenAI
+
+    client = OpenAI()
+    resp = client.embeddings.create(input=texts, model=model)
+    vecs = np.array([d.embedding for d in resp.data], dtype=np.float32)
+    return l2_normalize(vecs)
+
+
+def openai_chat(messages: List[Dict], model: str = DEFAULT_CHAT_MODEL) -> str:
+    from openai import OpenAI
+
+    client = OpenAI()
+    resp = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=0.3,
+        max_tokens=1200,
+    )
+    return resp.choices[0].message.content or ""
+
+
+def filter_sphera(
+    df: pd.DataFrame,
+    locations: Optional[List[str]],
+    substr: Optional[str],
+    years: int,
+) -> pd.DataFrame:
+    now = pd.Timestamp.now(tz=None)
+    start_date = now - pd.DateOffset(years=years)
+
+    out = df.copy()
+    if "EventDate" in out.columns:
+        out = out[out["EventDate"] >= start_date]
+
+    # Location: usa LOCATION > FPSO > Location > FPSO/Unidade > Unidade (nunca AREA)
+    loc_col = None
+    for _c in ["LOCATION","FPSO","Location","FPSO/Unidade","Unidade"]:
+        if _c in out.columns:
+            loc_col = _c
             break
+    if loc_col and locations:
+        sel = set([str(x).strip() for x in locations if str(x).strip()])
+        out = out[out[loc_col].astype(str).isin(sel)]
+
+    if substr:
+        # Case-insensitive, coluna correta: Description
+        desc_col = "Description" if "Description" in out.columns else ("DESCRIPTION" if "DESCRIPTION" in out.columns else None)
+        if desc_col:
+            mask = out[desc_col].astype(str).str.contains(substr, case=False, na=False)
+            out = out[mask]
     return out
 
-# ========================== Agregação — WS / Precursores / CP ==========================
 
-def aggregate_dict_matches_over_hits(
-    hits: List[Tuple[str, float, pd.Series]],
-    E_ws, L_ws, E_prec, L_prec, E_cp, L_cp,
-    thr_ws: float, thr_prec: float, thr_cp: float,
-    topn_ws: int, topn_prec: int, topn_cp: int,
-    agg_mode: str = "max",
-    per_event_thr: float = 0.30,
+def retrieve_topk(
+    query_vec: np.ndarray,
+    emb_corpus: np.ndarray,
+    idx_map: np.ndarray,
+    df_filtered: pd.DataFrame,
+    top_k: int,
+    sim_threshold: float,
+) -> Tuple[pd.DataFrame, np.ndarray]:
+    """Retorna top-k por similaridade (cos) >= limiar, respeitando df_filtered."""
+    if emb_corpus.size == 0 or df_filtered.empty:
+        return pd.DataFrame(columns=["EventID","Description","Location","EventDate","sim"]), np.array([], dtype=np.int64)
+
+    # Mapeia índice do df para posições no embeddings
+    allowed_ids = set(df_filtered.index.tolist())
+
+    # Similaridade
+    sims = cosine_sim(query_vec, emb_corpus)[0]  # (N,)
+
+    # Seleciona apenas eventos presentes no df_filtered via idx_map
+    mask_allowed = np.array([i in allowed_ids for i in idx_map])
+    sims_allowed = np.where(mask_allowed, sims, -1.0)
+
+    # Filtra por limiar e top-k
+    valid_idx = np.where(sims_allowed >= sim_threshold)[0]
+    if valid_idx.size == 0:
+        return pd.DataFrame(columns=["EventID","Description","Location","EventDate","sim"]), np.array([], dtype=np.int64)
+
+    order = np.argsort(-sims_allowed[valid_idx])[:top_k]
+    picked = valid_idx[order]
+
+    picked_df_idxs = idx_map[picked]
+    rows = df_filtered.loc[picked_df_idxs, [c for c in ["EventID","Description","Location","EventDate"] if c in df_filtered.columns]].copy()
+    rows["sim"] = sims_allowed[picked]
+    # Garante que não venha zero contagens quando há hits
+    if rows.empty is False:
+        pass
+    return rows, picked_df_idxs
+
+
+# =============================
+# --- Dicionários WS/CP/Prec ---
+# =============================
+
+def load_dicts() -> pd.DataFrame:
+    """Carrega dicionários (ws/precursor/cp) de .parquet OU .npz.
+    Espera colunas: ['type' in {'WS','Precursor','CP'}, 'term'] opcional 'weight'.
+    Se .npz tiver 'terms' e 'types' (e opcional 'weights'), também é aceito.
+    """
+    for p in DICT_PATHS:
+        if not os.path.exists(p):
+            continue
+        if p.endswith(".parquet"):
+            try:
+                df = pd.read_parquet(p)
+                if not {"type","term"}.issubset(df.columns):
+                    st.warning(f"Dicionário {p} sem colunas mínimas ['type','term'] — ignorando.")
+                    continue
+                # Normaliza
+                df = df[["type","term"] + (["weight"] if "weight" in df.columns else [])].copy()
+                return df
+            except Exception as e:
+                st.warning(f"Falha ao ler {p}: {e}")
+        else:
+            # NPZ
+            try:
+                npz = np.load(p, allow_pickle=True)
+                terms = npz.get("terms")
+                types = npz.get("types")
+                weights = npz.get("weights")
+                if terms is None or types is None:
+                    continue
+                data = {"type": list(types), "term": list(terms)}
+                if weights is not None:
+                    data["weight"] = list(weights)
+                return pd.DataFrame(data)
+            except Exception as e:
+                st.warning(f"Falha ao ler {p}: {e}")
+    return pd.DataFrame(columns=["type","term","weight"])  # vazio, mas com colunas
+
+
+def score_dict_matches(
+    events_df: pd.DataFrame,
+    dict_df: pd.DataFrame,
+    mode: str = "mean",
+    per_event_threshold: float = 0.0,
     min_support: int = 1,
-) -> Dict[str, List[Tuple[str, float, int]]]:
-    """Compara dicionários vs DESCRIPTIONS dos **hits** Sphera. Retorna listas (label, sim, suporte)."""
-    if not hits:
-        return {"ws": [], "prec": [], "cp": []}
+) -> pd.DataFrame:
+    """Calcula contagens por WS/Precursor/CP com base em termos do dicionário NA DESCRIPTION.
+    Regra: NUNCA inventar termos — apenas aqueles presentes no dicionário são usados.
+    Implementação:
+      - substring case-insensitive dos termos na Description (rápido e determinístico).
+      - agrega por tipo com mean OU max por evento (se termo tiver peso, utiliza; caso contrário peso=1.0)
+      - aplica per_event_threshold (p.ex., pontuação >= limiar conta)
+      - aplica min_support (número mínimo de eventos com pontuação acima do limiar para exibir)
+    Retorna DataFrame com colunas: ['type','support','score']
+    """
+    if events_df.empty or dict_df.empty:
+        return pd.DataFrame(columns=["type","support","score"])  # nada a mostrar
 
-    # Coleta descrições
-    descs = []
-    for _, _, row in hits:
-        descs.append(str(row.get("Description", row.get("DESCRIPTION", ""))).strip())
-    descs = [d for d in descs if d]
-    if not descs:
-        return {"ws": [], "prec": [], "cp": []}
+    # Prepara dicionário por tipo
+    dict_df = dict_df.copy()
+    if "weight" not in dict_df.columns:
+        dict_df["weight"] = 1.0
+    dict_df["term_norm"] = dict_df["term"].astype(str).str.lower()
 
-    V_desc = encode_texts(descs, batch_size=32)
-    V_desc_T = V_desc.T
+    # Para cada evento, calcula score por tipo agregando termos encontrados
+    results = []
+    for idx, row in events_df.iterrows():
+        desc = str(row.get("Description", ""))
+        desc_l = desc.lower()
+        ev_scores: Dict[str, float] = {}
+        for ttype in ["WS","Precursor","CP"]:
+            sub = dict_df[dict_df["type"] == ttype]
+            if sub.empty:
+                ev_scores[ttype] = 0.0
+                continue
+            hits = sub[ sub["term_norm"].apply(lambda x: x in desc_l) ]
+            if hits.empty:
+                ev_scores[ttype] = 0.0
+                continue
+            vals = hits["weight"].astype(float).values
+            if mode == "max":
+                s = float(np.max(vals))
+            else:
+                s = float(np.mean(vals))
+            ev_scores[ttype] = s
+        results.append(ev_scores)
 
-    def _score(E_bank, labels_df, thr_global, topn_target):
-        if E_bank is None or labels_df is None or len(labels_df) != (E_bank.shape[0] if hasattr(E_bank, "shape") else 0):
-            return []
-        S = (E_bank @ V_desc_T)  # N_terms x M_events
-        support = (S >= per_event_thr).sum(axis=1)
-        sims = S.mean(axis=1) if agg_mode == "mean" else S.max(axis=1)
-        mask = (support >= min_support) & (sims >= thr_global)
-        idx = np.where(mask)[0]
-        if idx.size == 0:
-            return []
-        order = idx[np.argsort(sims[idx])[::-1]]
-        out = []
-        for i in order[:topn_target]:
-            label = str(labels_df.iloc[i].get("label", labels_df.iloc[i].get("text", f"TERM_{i}")))
-            out.append((label, float(sims[i]), int(support[i])))
-        return out
+    ev_scores_df = pd.DataFrame(results)
+    ev_scores_df.index = events_df.index
 
-    return {
-        "ws":   _score(E_ws,   L_ws,   thr_ws,   topn_ws),
-        "prec": _score(E_prec, L_prec, thr_prec, topn_prec),
-        "cp":   _score(E_cp,   L_cp,   thr_cp,   topn_cp),
-    }
+    # Aplica limiar por evento (mantém 1 se >= limiar, senão 0)
+    bin_df = (ev_scores_df >= per_event_threshold).astype(int)
 
-# ========================== Chat / Modelo ==========================
+    # Suporte por tipo = número de eventos com score >= limiar
+    support = bin_df.sum(axis=0)
 
-def ollama_chat(messages, model=None, temperature=0.2, stream=False, timeout=120):
-    if not (OLLAMA_HOST and (model or OLLAMA_MODEL)):
-        raise RuntimeError("Modelo não configurado. Defina OLLAMA_HOST e OLLAMA_MODEL.")
-    import requests
-    r = requests.post(f"{OLLAMA_HOST}/api/chat", headers=HEADERS_JSON, json={
-        "model": model or OLLAMA_MODEL, "messages": messages, "temperature": float(temperature), "stream": bool(stream)
-    }, timeout=timeout)
-    r.raise_for_status()
-    return r.json()
+    # Score agregado por tipo = média dos scores nos eventos com >= limiar (ou 0 se nenhum)
+    score_vals = {}
+    for col in ev_scores_df.columns:
+        sel = ev_scores_df[col][bin_df[col] == 1]
+        score_vals[col] = float(sel.mean()) if not sel.empty else 0.0
 
-# ========================== Sidebar ==========================
-st.sidebar.subheader("Assistente de Prompts")
-prompts_bank = load_prompts_md(PROMPTS_MD_PATH)
+    out = pd.DataFrame({
+        "type": ["WS","Precursor","CP"],
+        "support": [int(support.get(t, 0)) for t in ["WS","Precursor","CP"]],
+        "score": [float(score_vals.get(t, 0.0)) for t in ["WS","Precursor","CP"]],
+    })
 
-# Dois combos simultâneos: Texto e Upload
-col_p1, col_p2 = st.sidebar.columns(2)
-with col_p1:
-    titles_texto = [it["title"] for it in prompts_bank.get("Texto", [])]
-    sel_texto = st.selectbox("Texto", options=["(vazio)"] + titles_texto, index=0, key="sel_texto")
-with col_p2:
-    titles_upload = [it["title"] for it in prompts_bank.get("Upload", [])]
-    sel_upload = st.selectbox("Upload", options=["(vazio)"] + titles_upload, index=0, key="sel_upload")
+    # Aplica min_support para exibição coerente
+    out = out[out["support"] >= int(min_support)]
 
-if st.sidebar.button("Carregar no rascunho", use_container_width=True, key="btn_load_prompt"):
-    draft = []
-    if sel_texto != "(vazio)":
-        body = next((it["body"] for it in prompts_bank["Texto"] if it["title"] == sel_texto), "")
-        if body: draft.append(body)
-    if sel_upload != "(vazio)":
-        body = next((it["body"] for it in prompts_bank["Upload"] if it["title"] == sel_upload), "")
-        if body: draft.append(body)
-    st.session_state.draft_prompt = ("\n\n".join(draft)).strip()
-    st.sidebar.success("Modelo(s) carregado(s) no rascunho.")
-    st.rerun()
-
-st.sidebar.header("Recuperação – Sphera")
-k_sph      = st.sidebar.slider("Top-K Sphera", 1, 100, 20, 1)
-thr_sph    = st.sidebar.slider("Limiar Sphera (cos)", 0.0, 1.0, 0.30, 0.01)
-apply_tf   = st.sidebar.checkbox("Filtrar últimos N anos", True)
-years_back = st.sidebar.slider("N (anos)", 1, 10, 3, 1)
-
-st.sidebar.subheader("Filtros avançados – Sphera")
-# LOCATION list (entrada livre separada por ;) para não limitar opções
-sph_loc_selected  = st.sidebar.text_input("Filtrar LOCATION (lista ;)", "")
-sph_desc_contains = st.sidebar.text_input("Description contém (substring)", "")
-
-st.sidebar.subheader("Agregação sobre eventos recuperados (Sphera)")
-agg_mode     = st.sidebar.selectbox("Agregação", ["max", "mean"], index=0)
-per_ev_thr   = st.sidebar.slider("Limiar por evento (dicionários)", 0.0, 1.0, 0.30, 0.01)
-min_support  = st.sidebar.slider("Suporte mínimo (nº de eventos)", 1, 20, 1, 1)
-thr_ws       = st.sidebar.slider("Limiar global WS", 0.0, 1.0, 0.25, 0.01)
-thr_prec     = st.sidebar.slider("Limiar global Precursores", 0.0, 1.0, 0.25, 0.01)
-thr_cp       = st.sidebar.slider("Limiar global CP", 0.0, 1.0, 0.25, 0.01)
-topn_ws      = st.sidebar.slider("Top-N WS", 3, 90, 10, 1)
-topn_prec    = st.sidebar.slider("Top-N Precursores", 3, 90, 10, 1)
-topn_cp      = st.sidebar.slider("Top-N CP", 3, 90, 10, 1)
-
-st.sidebar.subheader("Upload")
-upload_raw_max = st.sidebar.slider("Tamanho máx. de UPLOAD_RAW (chars)", 300, 20000, 2500, 100)
-
-# Utilidades (sem disparo de prompts)
-c1, c2 = st.sidebar.columns(2)
-with c1:
-    if st.button("Limpar uploads", use_container_width=True, key="btn_clear_upl"):
-        st.session_state.upld_texts = []
-        st.session_state.upld_meta  = []
-        st.session_state.upld_emb   = None
-        st.session_state.pop("last_upload_digest", None)
-        st.rerun()
-with c2:
-    if st.button("Limpar chat", use_container_width=True, key="btn_clear_chat"):
-        st.session_state.chat = []
-        st.rerun()
-
-# ========================== UI central ==========================
-st.title("ESO • CHAT (Somente Sphera)")
-
-st.text_area("Conteúdo do prompt", key="draft_prompt", height=180, placeholder="Digite ou carregue um modelo de prompt…")
-
-user_text = st.text_area("Texto de análise (para Sphera)", height=200, placeholder="Cole aqui a descrição/evento a analisar…")
-
-uploaded = st.file_uploader("Anexar arquivo (opcional)", type=["txt","md","pdf","docx","csv","xlsx"])
-if uploaded is not None:
-    raw = uploaded.read()
-    # leitura básica (sem libs pesadas) — trata como texto bruto/csv simples
-    try:
-        as_text = raw.decode("utf-8", errors="ignore")
-    except Exception:
-        as_text = ""
-    if as_text:
-        if len(as_text) > upload_raw_max:
-            as_text = as_text[:upload_raw_max]
-        st.session_state.upld_texts.append(as_text)
-        st.success(f"Upload recebido: {uploaded.name} (armazenado no contexto local).")
-
-col_run1, col_run2 = st.columns([1,1])
-go_btn      = col_run1.button("Enviar para o chat", type="primary", use_container_width=True, key="btn_send")
-clear_draft = col_run2.button("Limpar rascunho", use_container_width=True, key="btn_clear_draft")
-if clear_draft:
-    st.session_state.draft_prompt = ""
-    st.rerun()
-
-# ========================== Execução ==========================
-
-def render_hits_table(hits: List[Tuple[str, float, pd.Series]], df_all: Optional[pd.DataFrame]) -> str:
-    if not hits:
-        return ""
-    lines = ["| Event ID | Similaridade | LOCATION | Descrição |", "|---|---:|---|---|"]
-    loc_col = get_sphera_location_col(df_all) if df_all is not None else None
-    for evid, s, row in hits[:min(10, len(hits))]:
-        loc_val = str(row.get(loc_col, "N/D")) if loc_col else "N/D"
-        desc    = str(row.get("Description", row.get("DESCRIPTION", ""))).replace("\n", " ").strip()[:240]
-        lines.append(f"| {evid} | {s:.3f} | {loc_val} | {desc} |")
-    return "\n".join(lines)
+    return out.reset_index(drop=True)
 
 
-def push_model(messages: List[Dict[str, str]], pergunta: str, contexto_md: str):
-    # Injeta contexto calculado pelo app como apoio, sem impor formato fixo
-    messages.append({"role": "user", "content": "DADOS DE APOIO (não responda aqui):\n" + contexto_md})
-    qt = pergunta or st.session_state.draft_prompt or "Analise os dados fornecidos e sintetize as lições."
-    messages.append({"role": "user", "content": f"Pergunta: {qt}"})
-    try:
-        resp = ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False)
-        content = ""
-        if isinstance(resp, dict):
-            content = resp.get("message", {}).get("content", "") or resp.get("content", "")
-        if not content:
-            content = "(Sem conteúdo do modelo)"
-        with st.chat_message("assistant"):
-            st.markdown(content)
-        st.session_state.chat.append({"role": "assistant", "content": content})
-    except Exception as e:
-        st.error(f"Falha ao consultar modelo: {e}")
+# =============================
+# ---------- Prompts -----------
+# =============================
 
-if go_btn:
-    # 1) Monta blocos do usuário (rascunho + texto + uploads)
-    blocks = []
-    if st.session_state.draft_prompt.strip():
-        blocks.append("PROMPT:\n" + st.session_state.draft_prompt.strip())
-    if (user_text or "").strip():
-        blocks.append("TEXTO:\n" + user_text.strip())
-    for i, t in enumerate(st.session_state.upld_texts or []):
-        blocks.append(f"UPLOAD[{i+1}]:\n" + t.strip())
+def parse_prompts_md(md_text: str) -> Dict[str, Dict[str, str]]:
+    """Parses prompts.md em duas seções: 'Texto' e 'Upload'.
+    Estrutura esperada:
+    ## Texto
+    ### Nome 1
+    Conteúdo...
+    ### Nome 2
+    ...
+    ## Upload
+    ### Nome A
+    ...
+    Retorna: {'Texto': {nome:conteudo}, 'Upload': {nome:conteudo}}
+    """
+    sections = {"Texto": {}, "Upload": {}}
+    current = None
+    current_title = None
+    buffer = []
 
-    messages = [{"role": "system", "content": st.session_state.system_prompt}]
-    messages.append({"role": "user", "content": "\n\n".join(blocks) if blocks else "Sem prompt/texto. Explique como devo proceder."})
+    lines = md_text.splitlines()
+    for line in lines:
+        if line.startswith("## "):
+            # salva bloco anterior
+            if current and current_title and buffer:
+                sections[current][current_title] = "\n".join(buffer).strip()
+            # inicia nova seção
+            name = line[3:].strip()
+            current = "Texto" if name.lower().startswith("texto") else ("Upload" if name.lower().startswith("upload") else None)
+            current_title = None
+            buffer = []
+        elif line.startswith("### ") and current is not None:
+            # salva bloco anterior
+            if current_title and buffer:
+                sections[current][current_title] = "\n".join(buffer).strip()
+            current_title = line[4:].strip()
+            buffer = []
+        else:
+            if current is not None and current_title is not None:
+                buffer.append(line)
+    # salva final
+    if current and current_title and buffer:
+        sections[current][current_title] = "\n".join(buffer).strip()
+    return sections
 
-    # 2) Busca Sphera (somente Sphera)
-    loc_list = [x.strip() for x in sph_loc_selected.split(";")] if sph_loc_selected.strip() else []
-    hits = sphera_similar_to_text(
-        query_text=(user_text or st.session_state.draft_prompt),
-        min_sim=thr_sph,
-        years=(years_back if apply_tf else None),
-        topk=k_sph,
-        df_sph=df_sph,
-        E_sph=E_sph,
-        desc_contains=sph_desc_contains,
-        loc_list=loc_list,
+
+# =============================
+# --------- UI Helpers ---------
+# =============================
+
+def init_session_state():
+    for k, v in [
+        (SS_LOADED, False),
+        (SS_CHAT, []),
+        (SS_UPLOAD_TEXT, ""),
+        (SS_UPLOAD_META, {}),
+        (SS_UPLOAD_EMB, None),
+        (SS_PROMPT_DRAFT, ""),
+        (SS_LAST_RESULTS, pd.DataFrame()),
+        (SS_LAST_MATCHES, np.array([], dtype=np.int64)),
+        (SS_DEBUG, False),
+    ]:
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+
+def sidebar_controls(df_sphera: pd.DataFrame) -> Dict:
+    st.sidebar.header("Parâmetros de busca — Sphera")
+
+    # Location (multiselect com detecção de coluna)
+    loc_col = None
+    if df_sphera is not None and not df_sphera.empty:
+        for _c in ["LOCATION","FPSO","Location","FPSO/Unidade","Unidade"]:
+            if _c in df_sphera.columns:
+                loc_col = _c
+                break
+    loc_options = []
+    if loc_col:
+        loc_options = sorted([x for x in df_sphera[loc_col].dropna().astype(str).unique().tolist() if x])
+    locations = st.sidebar.multiselect("Location", options=loc_options, default=[])
+
+    # Substring
+    substr = st.sidebar.text_input("Description contém (substring)", value="")
+
+    # Janela temporal
+    years = st.sidebar.slider("Últimos N anos", min_value=1, max_value=10, value=3, step=1)
+
+    # Top-k e limiar
+    top_k = st.sidebar.slider("Top-k Sphera", min_value=5, max_value=100, value=20, step=5)
+    sim_thr = st.sidebar.slider("Limiar de similaridade (cos)", min_value=0.1, max_value=0.95, value=0.45, step=0.05)
+
+    # Dicionários
+    st.sidebar.subheader("Dicionários (WS/Precursores/CP)")
+    agg_mode = st.sidebar.selectbox("Agregação por evento", options=["mean","max"], index=0)
+    per_ev_thr = st.sidebar.slider("Limiar por evento (WS/Prec/CP)", 0.0, 5.0, 0.0, 0.1)
+    min_support = st.sidebar.slider("Suporte mínimo (nº de eventos)", 1, 50, 1, 1)
+
+    # Depuração
+    st.sidebar.markdown("---")
+    debug = st.sidebar.toggle("Modo depuração (opcional)", value=False)
+
+    st.session_state[SS_DEBUG] = debug
+
+    return dict(
+        locations=locations,
+        substr=substr,
+        years=years,
+        top_k=top_k,
+        sim_thr=float(sim_thr),
+        agg_mode=agg_mode,
+        per_ev_thr=float(per_ev_thr),
+        min_support=int(min_support),
     )
 
-    # 3) Renderiza hits
-    table_md = ""
-    if hits:
-        table_md = render_hits_table(hits, df_sph)
-        st.markdown("**Eventos do Sphera (Top-10)**\n\n" + table_md)
-        st.session_state.chat.append({"role": "assistant", "content": "Eventos Sphera listados."})
-    else:
-        st.info("Nenhum evento do Sphera atingiu o limiar de similaridade com os filtros atuais.")
 
-    # 4) Dicionários sobre os hits
-    # Heurística simples de idioma (PT/EN) — preferir PT
-    lang = "pt"
-    E_ws,   L_ws   = select_ws_bank(lang)
-    E_prec, L_prec = select_prec_bank(lang)
-    E_cp,   L_cp   = select_cp_bank()
+def prompts_ui() -> Tuple[str, Dict[str, Dict[str, str]]]:
+    st.subheader("Seletor de Prompts")
+    md = _safe_read_text(PROMPTS_MD_PATH)
+    sections = parse_prompts_md(md) if md else {"Texto": {}, "Upload": {}}
 
-    dict_matches = aggregate_dict_matches_over_hits(
-        hits, E_ws, L_ws, E_prec, L_prec, E_cp, L_cp,
-        thr_ws=thr_ws, thr_prec=thr_prec, thr_cp=thr_cp,
-        topn_ws=topn_ws, topn_prec=topn_prec, topn_cp=topn_cp,
-        agg_mode=agg_mode, per_event_thr=per_ev_thr, min_support=min_support,
+    col1, col2 = st.columns(2)
+    with col1:
+        opt_texto = ["(vazio)"] + list(sections.get("Texto", {}).keys())
+        sel_texto = st.selectbox("Prompt — Texto", options=opt_texto, index=0, key="sel_texto")
+    with col2:
+        opt_upload = ["(vazio)"] + list(sections.get("Upload", {}).keys())
+        sel_upload = st.selectbox("Prompt — Upload", options=opt_upload, index=0, key="sel_upload")
+
+    # Caixa de rascunho
+    st.text_area("Conteúdo do prompt", key=SS_PROMPT_DRAFT, height=160)
+
+    # Botão carregar
+    def _load_prompt_to_draft():
+        chosen = None
+        if st.session_state.get("sel_texto") and st.session_state["sel_texto"] != "(vazio)":
+            chosen = sections.get("Texto", {}).get(st.session_state["sel_texto"]) or ""
+        if st.session_state.get("sel_upload") and st.session_state["sel_upload"] != "(vazio)":
+            # Se também escolheu upload, concatena abaixo
+            chosen2 = sections.get("Upload", {}).get(st.session_state["sel_upload"]) or ""
+            chosen = (chosen or "") + ("\n\n" + chosen2 if chosen2 else "")
+        if chosen:
+            st.session_state[SS_PROMPT_DRAFT] = chosen
+
+    st.button("Carregar no rascunho", on_click=_load_prompt_to_draft)
+    return st.session_state.get(SS_PROMPT_DRAFT, ""), sections
+
+
+def uploads_ui() -> str:
+    st.subheader("Upload opcional (texto)")
+    up = st.file_uploader("Envie um arquivo .txt, .md ou .csv (usado para consulta por similaridade)", type=["txt","md","csv"], accept_multiple_files=False)
+
+    if up is not None:
+        try:
+            content = up.read()
+            try:
+                text = content.decode("utf-8")
+            except Exception:
+                text = content.decode("latin-1", errors="ignore")
+            # .csv: extrai só texto bruto
+            if up.name.lower().endswith(".csv"):
+                try:
+                    df = pd.read_csv(io.StringIO(text))
+                    text = "\n".join(df.astype(str).fillna("").apply(lambda r: " ".join(r.values), axis=1).tolist())
+                except Exception:
+                    pass
+            st.session_state[SS_UPLOAD_TEXT] = text
+            st.session_state[SS_UPLOAD_META] = {"filename": up.name, "size": len(content)}
+            st.success(f"Upload carregado: {up.name} ({len(content)} bytes)")
+        except Exception as e:
+            st.error(f"Falha no upload: {e}")
+
+    colu1, colu2 = st.columns([3,1])
+    with colu1:
+        st.text_area("Trecho do upload (opcional, usado na busca)", key=SS_UPLOAD_TEXT, height=140)
+    with colu2:
+        def _clear_uploads():
+            st.session_state[SS_UPLOAD_TEXT] = ""
+            st.session_state[SS_UPLOAD_META] = {}
+            st.session_state[SS_UPLOAD_EMB] = None
+            st.toast("Uploads limpos.")
+            st.rerun()
+        st.button("Limpar uploads", on_click=_clear_uploads)
+
+    return st.session_state.get(SS_UPLOAD_TEXT, "")
+
+
+def chat_box_ui() -> Tuple[str, bool, bool]:
+    st.subheader("Chat")
+    # Botões de manutenção
+    colc1, colc2 = st.columns([1,1])
+    with colc1:
+        def _clear_chat():
+            st.session_state[SS_CHAT] = []
+            st.toast("Histórico de chat limpo.")
+            st.rerun()
+        st.button("Limpar chat", on_click=_clear_chat)
+    with colc2:
+        run_btn = st.button("Enviar para o chat")
+
+    user_msg = st.chat_input("Escreva sua pergunta (ou use somente o upload/rascunho)")
+
+    # Só dispara quando clicar em "Enviar para o chat"
+    return user_msg or "", run_btn, False
+
+
+# =============================
+# --------- Motor RAG ---------
+# =============================
+
+def build_messages(
+    datasets_context: str,
+    prompt_draft: str,
+    user_question: str,
+    retrieved_df: pd.DataFrame,
+    dict_summary: pd.DataFrame,
+) -> List[Dict]:
+    """Monta mensagens para o LLM. Evita heurísticas fixas; apenas fornece contexto e instruções claras."""
+    system = (
+        "Você é um(a) analista de segurança offshore. Responda de forma objetiva, usando APENAS o contexto fornecido. "
+        "Não invente dados. Quando citar WS/Precursores/CP, use SOMENTE os termos presentes nos dicionários aplicados sobre as DESCRIPTIONS retornadas do Sphera. "
+        "Se algo não estiver no contexto, diga que não há evidência."
     )
+    # Injeta datasets_context sempre
+    system = datasets_context + "\n\n" + system
 
-    if hits:
-        md2 = []
-        # WS
-        ws = dict_matches.get("ws") or []
-        md2 += ["**WS (≥ limiar, calculado no app)**"]
-        if ws:
-            md2 += ["| Rank | Termo | Similaridade | Suporte |", "|---:|---|---:|---:|"]
-            for r, (label, s, sup) in enumerate(ws, 1):
-                md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
-        else:
-            md2 += ["Nenhum WS ≥ limiar."]
-        # Precursores
-        prec = dict_matches.get("prec") or []
-        md2 += ["", "**Precursores (≥ limiar, calculado no app)**"]
-        if prec:
-            md2 += ["| Rank | Termo | Similaridade | Suporte |", "|---:|---|---:|---:|"]
-            for r, (label, s, sup) in enumerate(prec, 1):
-                md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
-        else:
-            md2 += ["Nenhum Precursor ≥ limiar."]
-        # CP
-        cp = dict_matches.get("cp") or []
-        md2 += ["", "**CP (≥ limiar, calculado no app)**"]
-        if cp:
-            md2 += ["| Rank | Fator | Similaridade | Suporte |", "|---:|---|---:|---:|"]
-            for r, (label, s, sup) in enumerate(cp, 1):
-                md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
-        else:
-            md2 += ["Nenhum Fator CP ≥ limiar."]
-        st.markdown("\n".join(md2))
+    # Contexto factual com top eventos
+    ctx_rows = []
+    for _, r in retrieved_df.iterrows():
+        parts = [
+            f"EventID: {r.get('EventID','')}",
+            f"Location: {r.get('Location','')}",
+            f"EventDate: {str(r.get('EventDate'))}",
+            f"Similarity: {r.get('sim',0):.3f}",
+            f"Description: {str(r.get('Description','')).strip()}",
+        ]
+        ctx_rows.append(" | ".join(parts))
+    ctx_block = "\n".join(ctx_rows[:100])  # limita contexto
 
-    # 5) Síntese pelo modelo (sem heurística fixa)
-    ctx_chunks = [
-        f"Sphera_hits={len(hits)}, thr_sph={thr_sph:.2f}, years={'all' if not apply_tf else years_back}",
+    # Resumo WS/Precursores/CP (apenas o que tem suporte)
+    dict_block = []
+    if not dict_summary.empty:
+        for _, r in dict_summary.iterrows():
+            dict_block.append(f"{r['type']}: suporte={int(r['support'])}, score={float(r['score']):.3f}")
+    dict_block = "\n".join(dict_block)
+
+    user_full = "\n\n".join([
+        ("INSTRUÇÕES DO PROMPT:\n" + prompt_draft.strip()) if prompt_draft.strip() else "",
+        ("PERGUNTA DO USUÁRIO:\n" + user_question.strip()) if user_question.strip() else "",
+        ("EVENTOS SELECIONADOS (Sphera):\n" + ctx_block) if ctx_block else "",
+        ("RESUMO DICIONÁRIOS (WS/Precursores/CP):\n" + dict_block) if dict_block else "",
+    ]).strip()
+
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user_full},
     ]
-    if hits and table_md:
-        ctx_chunks.append("HITS_TOP10_MD:\n" + table_md)
-        def _b(lst, name):
-            if not lst:
-                return f"{name}: nenhum ≥ limiar"
-            rows = [f"- {lab} (sim={s:.3f}, sup={sup})" for lab, s, sup in lst[:10]]
-            return name + ":\n" + "\n".join(rows)
-        ctx_chunks.append(_b(dict_matches.get("ws"),   "WS selecionados"))
-        ctx_chunks.append(_b(dict_matches.get("prec"), "Precursores selecionados"))
-        ctx_chunks.append(_b(dict_matches.get("cp"),   "CP selecionados"))
+    return messages
 
-    model_context = "\n\n".join(ctx_chunks)
-    push_model([{ "role": "system", "content": st.session_state.system_prompt }], user_text, model_context)
 
-# ========================== Histórico ==========================
-if st.session_state.chat:
-    st.divider()
-    st.subheader("Histórico")
-    for m in st.session_state.chat[-10:]:
-        role = m.get("role","assistant")
-        with st.chat_message("assistant" if role != "user" else "user"):
-            st.markdown(m.get("content",""))
+def run_pipeline(
+    df_sphera: pd.DataFrame,
+    emb_corpus: np.ndarray,
+    idx_map: np.ndarray,
+    params: Dict,
+    prompt_draft: str,
+    user_question: str,
+    upload_text: str,
+    datasets_context: str,
+    dict_df: pd.DataFrame,
+) -> Tuple[str, pd.DataFrame]:
+    """Executa: filtro -> embedding da consulta -> retrieve -> dicionários -> LLM."""
+    # 1) Filtros Sphera
+    df_f = filter_sphera(df_sphera, params["locations"], params["substr"], params["years"]) if not df_sphera.empty else df_sphera
+
+    # 2) Texto de consulta (prioridade: user_question; senão upload; senão rascunho)
+    query_text = (user_question or upload_text or prompt_draft).strip()
+    if not query_text:
+        return "Forneça uma pergunta, prompt ou trecho de upload para buscar no Sphera.", pd.DataFrame()
+
+    # 3) Embedding da consulta
+    q_vec = embed_texts([query_text])  # normalizado
+
+    # 4) Retrieve top-k com limiar
+    top_df, picked_idx = retrieve_topk(q_vec, emb_corpus, idx_map, df_f, params["top_k"], params["sim_thr"])
+
+    # guarda para UI/depuração
+    st.session_state[SS_LAST_RESULTS] = top_df.copy()
+    st.session_state[SS_LAST_MATCHES] = picked_idx
+
+    if top_df.empty:
+        return "Nenhum evento do Sphera atingiu o limiar de similaridade dentro dos filtros.", top_df
+
+    # 5) Dicionários WS/Prec/CP sobre DESCRIPTIONS dos eventos selecionados
+    dict_summary = score_dict_matches(
+        events_df=top_df,
+        dict_df=dict_df,
+        mode=params["agg_mode"],
+        per_event_threshold=params["per_ev_thr"],
+        min_support=params["min_support"],
+    )
+
+    # 6) Monta mensagens e chama LLM
+    messages = build_messages(
+        datasets_context=datasets_context,
+        prompt_draft=prompt_draft,
+        user_question=user_question,
+        retrieved_df=top_df,
+        dict_summary=dict_summary,
+    )
+    answer = openai_chat(messages)
+
+    return answer, dict_summary
+
+
+# =============================
+# -------------- App ----------
+# =============================
+
+def main():
+    st.set_page_config(page_title=APP_TITLE, layout="wide")
+    init_session_state()
+
+    st.title(APP_TITLE)
+
+    # Carregamentos base (uma vez)
+    @st.cache_resource(show_spinner=True)
+    def _load_all():
+        df, emb, idx = load_sphera()
+        dicts = load_dicts()
+        ds_ctx = _safe_read_text(DATASETS_CONTEXT_PATH)
+        return df, emb, idx, dicts, ds_ctx
+
+    df_sphera, sph_emb, sph_idx, dict_df, datasets_ctx = _load_all()
+    if not st.session_state[SS_LOADED]:
+        st.session_state[SS_LOADED] = True
+
+    # Sidebar
+    params = sidebar_controls(df_sphera)
+
+    # Prompts
+    prompt_draft, _sections = prompts_ui()
+
+    # Uploads
+    upload_text = uploads_ui()
+
+    # Chat
+    user_msg, run_btn, has_user_msg = chat_box_ui()
+
+    # Exibe histórico existente (sem disparar LLM)
+    for m in st.session_state[SS_CHAT]:
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
+
+    # Disparo manual (botão) OU nova mensagem do usuário
+    should_run = run_btn
+
+    if should_run:
+        if has_user_msg:
+            st.session_state[SS_CHAT].append({"role": "user", "content": user_msg})
+
+        with st.spinner("Buscando no Sphera e gerando resposta..."):
+            answer, dict_summary = run_pipeline(
+                df_sphera=df_sphera,
+                emb_corpus=l2_normalize(sph_emb) if sph_emb.size else sph_emb,
+                idx_map=sph_idx,
+                params=params,
+                prompt_draft=prompt_draft,
+                user_question=user_msg,
+                upload_text=upload_text,
+                datasets_context=datasets_ctx,
+                dict_df=dict_df,
+            )
+
+        # Anexa resposta do assistente SEM padrões fixos
+        st.session_state[SS_CHAT].append({"role": "assistant", "content": answer})
+
+        # Renderiza últimas mensagens (somente as novas)
+        with st.chat_message("assistant"):
+            st.markdown(answer)
+
+    # Se debug ativo, mostrar tabelas auxiliares
+    if st.session_state[SS_DEBUG]:
+        st.markdown("---")
+        st.caption("Depuração — Top eventos e dicionários")
+        if isinstance(st.session_state.get(SS_LAST_RESULTS), pd.DataFrame) and not st.session_state[SS_LAST_RESULTS].empty:
+            st.dataframe(st.session_state[SS_LAST_RESULTS])
+        if isinstance(st.session_state.get(SS_LAST_MATCHES), np.ndarray) and st.session_state[SS_LAST_MATCHES].size:
+            st.write("Índices selecionados:", st.session_state[SS_LAST_MATCHES].tolist())
+
+
+if __name__ == "__main__":
+    main()
