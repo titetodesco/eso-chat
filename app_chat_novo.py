@@ -440,11 +440,11 @@ with c1:
         st.session_state.upld_meta  = []
         st.session_state.upld_emb   = None
         st.session_state.pop("last_upload_digest", None)
-        st.experimental_rerun()
+        st.rerun()
 with c2:
     if st.button("Limpar chat", use_container_width=True, key="btn_clear_chat"):
         st.session_state.chat = []
-        st.experimental_rerun()
+        st.rerun()
 
 # ========================== UI central ==========================
 st.title("ESO • CHAT (Somente Sphera)")
@@ -472,7 +472,7 @@ go_btn      = col_run1.button("Enviar para o chat", type="primary", use_containe
 clear_draft = col_run2.button("Limpar rascunho", use_container_width=True, key="btn_clear_draft")
 if clear_draft:
     st.session_state.draft_prompt = ""
-    st.experimental_rerun()
+    st.rerun()
 
 # ========================== Execução ==========================
 
