@@ -1,29 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-app_chat_novo.py — FINAL (corrigido)
+app_chat_novo.py — FINAL (v2 corrigido)
 
-Correções desta entrega (além do que já havia):
-1) LOCATION no multiselect agora lê **exclusivamente** de `LOCATION` do Sphera (data/analytics/sphera.parquet). Se a coluna não existir, o filtro mostra aviso e permanece vazio (sem quebrar o fluxo).
-2) Caminhos ajustados: **tudo** em `data/analytics/` (parquet e npz). Mensagens de erro e loaders sincronizados.
-3) Execução só ocorre após clicar **“Enviar para o chat”** — upload/inputs não disparam a pipeline sozinhos.
-4) Limiar de similaridade **WS / Precursor / CP** mantidos/renomeados na UI como solicitado (sem retirar funcionalidades). Também mantidos: limiar por evento e suporte mínimo.
-
-Mantido do release anterior:
-- Recuperação **somente Sphera** por similaridade coseno com `Description`/`DESCRIPTION` (query ou trecho de upload).
-- `datasets_context.md` é **sempre injetado** no system; sem toggle.
-- WS/Precursores/CP **apenas** dos dicionários existentes (.npz/.parquet), agregação `max/mean`, limiar por evento e suporte mínimo, sem inventar termos.
-- “Description contém (substring)” case-insensitive + segura; Location somente `LOCATION`.
-- Seletor de prompts (Texto/Upload) lido de `data/prompts/prompts.md` + “Carregar no rascunho”; rascunho editável e “Enviar para o chat”.
-- “Limpar uploads” e “Limpar chat” limpam estado e chamam `st.rerun()` sem disparar o chat.
+Correções desta versão:
+- LOCATION: agora é hidratado a partir de múltiplas fontes, nesta ordem: (1) coluna `LOCATION` no `data/analytics/sphera.parquet`; (2) campos de metadados no `data/analytics/sphera_embeddings.npz` (`LOCATION`, `location`, `locations`, ou `meta` com `LOCATION`); (3) Excel `data/xlsx/TRATADO_safeguardOffShore.xlsx` por merge usando chaves (`Event ID` ou `EVENT_NUMBER` ou `EVENTID`). Assim o filtro Location deixa de ficar vazio.
+- Caminhos fixados em `data/analytics` para parquet/npz; Excel em `data/xlsx` e prompts/contexto em `data/`.
+- Execução somente ao clicar **"Enviar para o chat"** (uploads/inputs não disparam).
+- "Description" nas tabelas sai **completa** (sem truncar). Usei `st.dataframe` para melhor leitura quando for longa.
+- Botão **"Limpar rascunho"** corrigido com flag antes do widget (evita erro de `session_state`), e **"Limpar chat"** restaurado.
+- Removidas duplicidades de tabelas/saídas: fica **uma** tabela por execução ("Eventos do Sphera (Top-10)") e o histórico não reimprime os hits.
+- Mantidos todos os limiares: **Limiar Sphera (cos)**, **Limiar por evento (dicionários)**, **Limiar de similaridade WS/Precursor/CP**, **Suporte mínimo**, **Top-N** por família e **Agregação (max/mean)**.
 
 Requisitos: streamlit, pandas, numpy, sentence-transformers, requests.
-Modelo: OLLAMA_HOST / OLLAMA_MODEL (ou adapte para OpenAI se desejar).
 """
 
 import os
 import re
 import io
-import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
@@ -37,9 +30,13 @@ st.set_page_config(page_title="ESO • CHAT", page_icon="💬", layout="wide")
 
 DATA_DIR = Path("data")
 AN_DIR   = DATA_DIR / "analytics"
-DOCS_DIR = Path("docs")
+XLSX_DIR = DATA_DIR / "xlsx"
 DATASETS_CONTEXT_PATH = DATA_DIR / "datasets_context.md"
 PROMPTS_MD_PATH       = DATA_DIR / "prompts" / "prompts.md"
+
+SPH_PQ_PATH  = AN_DIR / "sphera.parquet"
+SPH_NPZ_PATH = AN_DIR / "sphera_embeddings.npz"
+XLSX_LOCATION_PATH = XLSX_DIR / "TRATADO_safeguardOffShore.xlsx"
 
 # Modelo (chat)
 OLLAMA_HOST    = st.secrets.get("OLLAMA_HOST", os.getenv("OLLAMA_HOST", ""))
@@ -47,7 +44,7 @@ OLLAMA_MODEL   = st.secrets.get("OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", ""))
 OLLAMA_API_KEY = st.secrets.get("OLLAMA_API_KEY", os.getenv("OLLAMA_API_KEY"))
 HEADERS_JSON   = {"Authorization": f"Bearer {OLLAMA_API_KEY}", "Content-Type": "application/json"} if OLLAMA_API_KEY else {"Content-Type": "application/json"}
 
-# Embeddings (Sentence-Transformers para query/upload; corpus já embutido em .npz)
+# Embeddings para query/upload (corpus já embutido em .npz)
 ST_MODEL_NAME = os.getenv("ST_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
 
 # ========================== Helpers base ==========================
@@ -73,6 +70,7 @@ def load_npz_embeddings(path: Path) -> Optional[np.ndarray]:
         return None
     try:
         with np.load(str(path), allow_pickle=True) as z:
+            # tenta chaves comuns
             for key in ("embeddings", "E", "X", "vectors", "vecs"):
                 if key in z:
                     E = np.array(z[key]).astype(np.float32, copy=False)
@@ -85,7 +83,7 @@ def load_npz_embeddings(path: Path) -> Optional[np.ndarray]:
                 if isinstance(arr, np.ndarray) and arr.ndim == 2 and arr.shape[0] > best_n:
                     best_k, best_n = k, arr.shape[0]
             if best_k is None:
-                st.warning(f"{path.name} não contém matriz 2D.")
+                st.warning(f"{path.name} não contém matriz 2D de embeddings.")
                 return None
             E = np.array(z[best_k]).astype(np.float32, copy=False)
             n = np.linalg.norm(E, axis=1, keepdims=True) + 1e-9
@@ -96,7 +94,6 @@ def load_npz_embeddings(path: Path) -> Optional[np.ndarray]:
 
 @st.cache_data(show_spinner=False)
 def load_prompts_md(md_path: Path) -> Dict[str, List[Dict[str, str]]]:
-    """Retorna {"Texto": [{title,body}], "Upload": [{title,body}]} a partir de data/prompts/prompts.md."""
     if not md_path.exists():
         return {"Texto": [], "Upload": []}
     raw = md_path.read_text(encoding="utf-8")
@@ -115,7 +112,7 @@ def load_prompts_md(md_path: Path) -> Dict[str, List[Dict[str, str]]]:
             if not p: continue
             title, _, body = p.partition("\n")
             data[first.strip()].append({"title": title.strip(), "body": body.strip()})
-    # Ordena por prefixo numérico "1) ..." se houver
+    # ordena se usar prefixo numérico "1) ..."
     def _k(x):
         m = re.match(r"^(\d+)\)", x["title"])
         return int(m.group(1)) if m else 9999
@@ -130,57 +127,95 @@ def load_file_text(p: Path) -> str:
     except Exception as e:
         return f"[AVISO] Não consegui ler {p}: {e} (continuando sem este contexto)"
 
-def build_system_prompt() -> str:
-    pre = (
-        "Você é o ESO-CHAT para segurança operacional (óleo e gás). "
-        "Responda em PT-BR, cite IDs/sim quando usar buscas locais, e não invente dados fora dos contextos fornecidos.\n\n"
-    )
-    ctx = []
-    if DATASETS_CONTEXT_PATH.exists():
-        ctx.append("=== DATASETS_CONTEXT ===\n" + load_file_text(DATASETS_CONTEXT_PATH))
-    return pre + "\n\n".join(ctx)
-
-# ========================== Estado ==========================
-if "system_prompt" not in st.session_state:
-    st.session_state.system_prompt = build_system_prompt()
-if "chat" not in st.session_state:
-    st.session_state.chat = []
-if "draft_prompt" not in st.session_state:
-    st.session_state.draft_prompt = ""
-if "upld_texts" not in st.session_state:
-    st.session_state.upld_texts = []
-
-if "st_encoder" not in st.session_state:
-    st.session_state.st_encoder = ensure_st_encoder()
-
-# ========================== Dados Sphera & Dicionários ==========================
-SPH_PQ_PATH  = AN_DIR / "sphera.parquet"
-SPH_EMB_PATH = AN_DIR / "sphera_embeddings.npz"
-
-df_sph = None
-if SPH_PQ_PATH.exists():
-    try:
-        df_sph = pd.read_parquet(SPH_PQ_PATH)
-    except Exception as e:
-        st.error(f"Falha ao ler {SPH_PQ_PATH}: {e}")
-else:
+# ========================== Dados base (Sphera + dicionários) ==========================
+if not SPH_PQ_PATH.exists():
     st.error(f"Parquet do Sphera não encontrado em {SPH_PQ_PATH}")
 
-E_sph = load_npz_embeddings(SPH_EMB_PATH)
-if E_sph is None:
-    st.error(f"Embeddings do Sphera não encontrados em {SPH_EMB_PATH}")
+df_sph = pd.read_parquet(SPH_PQ_PATH) if SPH_PQ_PATH.exists() else pd.DataFrame()
+E_sph = load_npz_embeddings(SPH_NPZ_PATH)
 
-# Dicionários PT/EN (ajuste se usar EN)
+# Dicionários PT (ajuste p/ EN se precisar)
 WS_NPZ,   WS_LBL   = AN_DIR / "ws_embeddings_pt.npz",   AN_DIR / "ws_embeddings_pt.parquet"
 PREC_NPZ, PREC_LBL = AN_DIR / "prec_embeddings_pt.npz", AN_DIR / "prec_embeddings_pt.parquet"
 CP_NPZ,   CP_LBL   = AN_DIR / "cp_embeddings.npz",      AN_DIR / "cp_labels.parquet"
 
-E_ws = load_npz_embeddings(WS_NPZ)
-L_ws = pd.read_parquet(WS_LBL) if WS_LBL.exists() else None
-E_prec = load_npz_embeddings(PREC_NPZ)
-L_prec = pd.read_parquet(PREC_LBL) if PREC_LBL.exists() else None
-E_cp = load_npz_embeddings(CP_NPZ)
-L_cp = pd.read_parquet(CP_LBL) if CP_LBL.exists() else None
+E_ws   = load_npz_embeddings(WS_NPZ) if WS_NPZ.exists() else None
+L_ws   = (pd.read_parquet(WS_LBL) if WS_LBL.exists() else None)
+E_prec = load_npz_embeddings(PREC_NPZ) if PREC_NPZ.exists() else None
+L_prec = (pd.read_parquet(PREC_LBL) if PREC_LBL.exists() else None)
+E_cp   = load_npz_embeddings(CP_NPZ) if CP_NPZ.exists() else None
+L_cp   = (pd.read_parquet(CP_LBL) if CP_LBL.exists() else None)
+
+# ========================== LOCATION: hidratação multi-fonte ==========================
+@st.cache_data(show_spinner=False)
+def hydrate_location(df: pd.DataFrame, npz_path: Path, xlsx_path: Path) -> pd.DataFrame:
+    d = df.copy()
+    # 1) Se já existe LOCATION no parquet, mantém
+    if "LOCATION" in d.columns and d["LOCATION"].notna().any():
+        return d
+    # 2) Tenta do NPZ: chaves esperadas ('LOCATION','location','locations','meta')
+    try:
+        if npz_path.exists():
+            with np.load(str(npz_path), allow_pickle=True) as z:
+                loc_arr = None
+                for k in ("LOCATION","location","locations"):
+                    if k in z:
+                        loc_arr = z[k]
+                        break
+                if loc_arr is None and "meta" in z:
+                    meta = z["meta"].item() if isinstance(z["meta"], np.ndarray) else z["meta"]
+                    if isinstance(meta, dict):
+                        loc_arr = meta.get("LOCATION") or meta.get("location")
+                if loc_arr is not None:
+                    loc_arr = np.asarray(loc_arr)
+                    if loc_arr.shape[0] == len(d):
+                        d["LOCATION"] = pd.Series(loc_arr).astype(str)
+                        return d
+    except Exception:
+        pass
+    # 3) Tenta Excel via merge por ID
+    if xlsx_path.exists():
+        try:
+            xdf = pd.read_excel(xlsx_path)
+            # Detecta colunas de id e LOCATION no excel
+            id_cols_excel = [c for c in ["Event ID","EVENT_NUMBER","EVENTID"] if c in xdf.columns]
+            if "LOCATION" in xdf.columns and id_cols_excel:
+                # escolhe a melhor coluna-id do df_sph
+                id_cols_sph = [c for c in ["Event ID","EVENT_NUMBER","EVENTID"] if c in d.columns]
+                if id_cols_sph:
+                    key_sph  = id_cols_sph[0]
+                    key_xlsx = id_cols_excel[0]
+                    a = d.copy()
+                    a[key_sph]  = a[key_sph].astype(str)
+                    b = xdf[[key_xlsx,"LOCATION"]].copy()
+                    b[key_xlsx] = b[key_xlsx].astype(str)
+                    a = a.merge(b, left_on=key_sph, right_on=key_xlsx, how="left")
+                    if "LOCATION_y" in a.columns:
+                        a["LOCATION"] = a["LOCATION"].fillna(a["LOCATION_y"]) if "LOCATION" in a.columns else a["LOCATION_y"]
+                        a = a.drop(columns=[c for c in ["LOCATION_y","LOCATION_x", key_xlsx] if c in a.columns])
+                    d = a
+        except Exception:
+            pass
+    return d
+
+df_sph = hydrate_location(df_sph, SPH_NPZ_PATH, XLSX_LOCATION_PATH)
+
+# ========================== Estado ==========================
+if "system_prompt" not in st.session_state:
+    pre = (
+        "Você é o ESO-CHAT para segurança operacional (óleo e gás). "
+        "Responda em PT-BR, cite IDs/sim quando usar buscas locais, e não invente dados fora dos contextos fornecidos.\n\n"
+    )
+    sys_ctx = (load_file_text(DATASETS_CONTEXT_PATH) if DATASETS_CONTEXT_PATH.exists() else "")
+    st.session_state.system_prompt = pre + ("=== DATASETS_CONTEXT ===\n" + sys_ctx if sys_ctx else "")
+if "chat" not in st.session_state:
+    st.session_state.chat = []
+if "draft_prompt" not in st.session_state:
+    st.session_state.draft_prompt = ""
+if "_clear_draft_flag" not in st.session_state:
+    st.session_state._clear_draft_flag = False
+if "st_encoder" not in st.session_state:
+    st.session_state.st_encoder = ensure_st_encoder()
 
 # ========================== Encoder wrappers ==========================
 @st.cache_data(show_spinner=False)
@@ -200,20 +235,18 @@ def encode_query(q: str) -> np.ndarray:
 # ========================== Filtros / Similaridade ==========================
 @st.cache_data(show_spinner=False)
 def filter_sphera(df: pd.DataFrame, locations: List[str], substr: str, years: int) -> pd.DataFrame:
-    if df is None:
+    if df is None or df.empty:
         return pd.DataFrame()
     out = df.copy()
-    # Janela temporal (se houver col EVENT_DATE)
+    # janela temporal (se houver EVENT_DATE)
     if "EVENT_DATE" in out.columns:
         out["EVENT_DATE"] = pd.to_datetime(out["EVENT_DATE"], errors="coerce")
         cutoff = pd.Timestamp(datetime.utcnow() - timedelta(days=365*years))
         out = out[out["EVENT_DATE"] >= cutoff]
-    # LOCATION obrigatório
+    # filtro LOCATION (se existir)
     if "LOCATION" in out.columns and locations:
         sel = set([str(x).strip() for x in locations if str(x).strip()])
         out = out[out["LOCATION"].astype(str).isin(sel)]
-    elif "LOCATION" not in out.columns:
-        st.info("Coluna LOCATION não encontrada no parquet. O filtro de Location ficará vazio.")
     # Description contém
     desc_col = "Description" if "Description" in out.columns else ("DESCRIPTION" if "DESCRIPTION" in out.columns else None)
     if desc_col and substr:
@@ -223,12 +256,14 @@ def filter_sphera(df: pd.DataFrame, locations: List[str], substr: str, years: in
 
 @st.cache_data(show_spinner=False)
 def sphera_similar_to_text(query_text: str, min_sim: float, years: int, topk: int,
-                           df_base: pd.DataFrame, E_base: np.ndarray,
+                           df_base: pd.DataFrame, E_base: Optional[np.ndarray],
                            substr: str, locations: List[str]) -> List[Tuple[str, float, pd.Series]]:
-    if not query_text or df_base is None or E_base is None or E_base.size == 0:
+    if not query_text or df_base is None or df_base.empty or E_base is None or E_base.size == 0:
         return []
     base = filter_sphera(df_base, locations, substr, years)
-    # Alinhamento índice→vetor (supõe embeddings na mesma ordem do parquet)
+    if base.empty:
+        return []
+    # assume ordem de embeddings == ordem do parquet
     try:
         idx_map = base.index.to_numpy()
         if np.issubdtype(idx_map.dtype, np.integer):
@@ -242,7 +277,7 @@ def sphera_similar_to_text(query_text: str, min_sim: float, years: int, topk: in
     qv = encode_query(query_text)
     sims = (E_view @ qv).astype(float)
     ord_idx = np.argsort(-sims)
-    id_col = "Event ID" if "Event ID" in base.columns else ("EVENT_NUMBER" if "EVENT_NUMBER" in base.columns else None)
+    id_col = "Event ID" if "Event ID" in base.columns else ("EVENT_NUMBER" if "EVENT_NUMBER" in base.columns else ("EVENTID" if "EVENTID" in base.columns else None))
     out = []
     kept = 0
     for i in ord_idx:
@@ -270,12 +305,11 @@ def aggregate_dict_matches_over_hits(
 ) -> Dict[str, List[Tuple[str, float, int]]]:
     if not hits:
         return {"ws": [], "prec": [], "cp": []}
-    # Descrições dos hits
     descs = [str(r.get("Description", r.get("DESCRIPTION", ""))).strip() for _,_,r in hits]
     descs = [d for d in descs if d]
     if not descs:
         return {"ws": [], "prec": [], "cp": []}
-    V_desc = encode_texts(descs, batch_size=32).T  # MxD -> D x M (transpose ao final)
+    V_desc = encode_texts(descs, batch_size=32).T
 
     def _score(E_bank, labels_df, thr_sim, topn_target):
         if E_bank is None or labels_df is None or len(labels_df) != E_bank.shape[0]:
@@ -342,12 +376,12 @@ thr_sph = st.sidebar.slider("Limiar Sphera (cos)", 0.0, 1.0, 0.30, 0.01)
 years   = st.sidebar.slider("Últimos N anos", 1, 10, 3, 1)
 
 st.sidebar.subheader("Filtros avançados – Sphera")
-# LOCATION a partir da coluna LOCATION
+# multiselect de LOCATION após hidratação
 loc_options = []
 if isinstance(df_sph, pd.DataFrame) and not df_sph.empty and "LOCATION" in df_sph.columns:
     loc_options = sorted([x for x in df_sph["LOCATION"].dropna().astype(str).unique().tolist() if x])
 else:
-    st.sidebar.info("Coluna LOCATION não encontrada — o filtro ficará vazio.")
+    st.sidebar.info("Coluna LOCATION não encontrada — tentando hidratar de fontes auxiliares.")
 locations = st.sidebar.multiselect("Location", options=loc_options, default=[])
 substr    = st.sidebar.text_input("Description contém (substring)", "")
 
@@ -366,24 +400,30 @@ topn_prec = st.sidebar.slider("Top-N Precursores", 3, 90, 10, 1)
 topn_cp   = st.sidebar.slider("Top-N CP", 3, 90, 10, 1)
 
 # Utilidades
-cc1, cc2 = st.sidebar.columns(2)
-with cc1:
+uc1, uc2 = st.sidebar.columns(2)
+with uc1:
     if st.button("Limpar uploads", use_container_width=True):
+        st.session_state.pop("upld_texts", None)
         st.session_state.upld_texts = []
         st.rerun()
-with cc2:
+with uc2:
     if st.button("Limpar chat", use_container_width=True):
         st.session_state.chat = []
         st.rerun()
 
 # ========================== UI central ==========================
+# limpar rascunho com flag antes do widget para evitar erro
+if st.session_state._clear_draft_flag:
+    st.session_state.draft_prompt = ""
+    st.session_state._clear_draft_flag = False
+
 st.title("ESO • CHAT (Somente Sphera)")
 
 st.text_area("Conteúdo do prompt", key="draft_prompt", height=180, placeholder="Digite ou carregue um modelo de prompt…")
 
 user_text = st.text_area("Texto de análise (para Sphera)", height=200, placeholder="Cole aqui a descrição/evento a analisar…")
 
-uploaded = st.file_uploader("Anexar arquivo (opcional)", type=["txt","md","csv"])
+uploaded = st.file_uploader("Anexar arquivo (opcional)", type=["txt","md","csv"])  # upload não dispara pipeline
 if uploaded is not None:
     raw = uploaded.read()
     try:
@@ -400,24 +440,31 @@ if uploaded is not None:
         st.session_state.upld_texts.append(as_text)
         st.success(f"Upload recebido: {uploaded.name} (armazenado no contexto local).")
 
-col_run1, col_run2 = st.columns([1,1])
+col_run1, col_run2, col_run3 = st.columns([1,1,1])
 go_btn      = col_run1.button("Enviar para o chat", type="primary", use_container_width=True)
 clear_draft = col_run2.button("Limpar rascunho", use_container_width=True)
+# botão duplicado de "Limpar chat" na área central (opcional, além da sidebar)
+clear_chat  = col_run3.button("Limpar chat", use_container_width=True)
+
 if clear_draft:
-    st.session_state.draft_prompt = ""
+    st.session_state._clear_draft_flag = True
+    st.rerun()
+if clear_chat:
+    st.session_state.chat = []
     st.rerun()
 
 # ========================== Execução (somente ao clicar) ==========================
 
-def render_hits_table(hits: List[Tuple[str, float, pd.Series]]) -> str:
+def render_hits_table(hits: List[Tuple[str, float, pd.Series]]):
     if not hits:
-        return ""
-    lines = ["| Event ID | Similaridade | LOCATION | Descrição |", "|---|---:|---|---|"]
-    for evid, s, row in hits[:min(10, len(hits))]:
+        return
+    rows = []
+    for evid, s, row in hits[: min(10, len(hits))]:
         loc_val = str(row.get("LOCATION", "N/D"))
-        desc    = str(row.get("Description", row.get("DESCRIPTION", ""))).replace("\n", " ").strip()[:240]
-        lines.append(f"| {evid} | {s:.3f} | {loc_val} | {desc} |")
-    return "\n".join(lines)
+        desc    = str(row.get("Description", row.get("DESCRIPTION", ""))).strip()
+        rows.append({"Event ID": evid, "Similaridade": round(s, 3), "LOCATION": loc_val, "Description": desc})
+    st.markdown("**Eventos do Sphera (Top-10)**")
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 
 def push_model(messages: List[Dict[str, str]], pergunta: str, contexto_md: str):
@@ -438,7 +485,7 @@ def push_model(messages: List[Dict[str, str]], pergunta: str, contexto_md: str):
         st.error(f"Falha ao consultar modelo: {e}")
 
 if go_btn:
-    # 1) Monta blocos do usuário
+    # 1) Monta blocos do usuário (apenas para contexto do modelo)
     blocks = []
     if st.session_state.draft_prompt.strip():
         blocks.append("PROMPT:\n" + st.session_state.draft_prompt.strip())
@@ -459,10 +506,9 @@ if go_btn:
         locations=locations,
     )
 
-    # 3) Renderiza hits
+    # 3) Renderiza hits (única tabela)
     if hits:
-        st.markdown("**Eventos do Sphera (Top-10)**\n\n" + render_hits_table(hits))
-        st.session_state.chat.append({"role": "assistant", "content": "Eventos Sphera listados."})
+        render_hits_table(hits)
     else:
         st.info("Nenhum evento do Sphera atingiu o limiar/filtros atuais.")
 
@@ -475,39 +521,35 @@ if go_btn:
     )
 
     if hits:
-        md2 = []
+        # Tabelas resumidas por família
         for title, key in [("WS", "ws"), ("Precursores", "prec"), ("CP", "cp")]:
             arr = dict_matches.get(key) or []
-            md2 += [f"**{title} (≥ limiares)**"]
+            st.markdown(f"**{title} (≥ limiares)**")
             if arr:
-                md2 += ["| Rank | Termo | Similaridade | Suporte |", "|---:|---|---:|---:|"]
-                for r, (label, s, sup) in enumerate(arr, 1):
-                    md2.append(f"| {r} | {label} | {s:.3f} | {sup} |")
+                df_out = pd.DataFrame([
+                    {"Rank": r+1, "Termo": lab, "Similaridade": round(s,3), "Suporte": sup}
+                    for r, (lab, s, sup) in enumerate(arr)
+                ])
+                st.dataframe(df_out, use_container_width=True, hide_index=True)
             else:
-                md2 += [f"Nenhum {title} ≥ limiar."]
-            md2 += [""]
-        st.markdown("\n".join(md2))
+                st.write(f"Nenhum {title} ≥ limiar.")
 
-    # 5) Síntese pelo modelo
-    table_md = render_hits_table(hits)
+    # 5) Síntese pelo modelo (uma única chamada)
+    table_ctx_rows = []
+    for evid, s, row in hits[: min(10, len(hits))]:
+        loc_val = str(row.get("LOCATION", "N/D"))
+        desc    = str(row.get("Description", row.get("DESCRIPTION", ""))).strip()
+        table_ctx_rows.append(f"EventID={evid} | sim={s:.3f} | LOCATION={loc_val} | Description={desc}")
+
     ctx_chunks = [
         f"Sphera_hits={len(hits)}, thr_sph={thr_sph:.2f}, years={years}",
-        ("HITS_TOP10_MD:\n" + table_md) if table_md else "",
+        "\n".join(table_ctx_rows)
     ]
-    # Resumo curto dos dicionários
-    def _b(lst, name):
-        if not lst:
-            return f"{name}: nenhum ≥ limiar"
-        rows = [f"- {lab} (sim={s:.3f}, sup={sup})" for lab, s, sup in lst[:10]]
-        return name + ":\n" + "\n".join(rows)
-    ctx_chunks.append(_b(dict_matches.get("ws"), "WS selecionados"))
-    ctx_chunks.append(_b(dict_matches.get("prec"), "Precursores selecionados"))
-    ctx_chunks.append(_b(dict_matches.get("cp"), "CP selecionados"))
 
     messages = [{"role": "system", "content": st.session_state.system_prompt}, {"role": "user", "content": "\n\n".join([b for b in blocks if b])}]
     push_model(messages, user_text, "\n\n".join([x for x in ctx_chunks if x]))
 
-# ========================== Histórico ==========================
+# ========================== Histórico (somente chat) ==========================
 if st.session_state.chat:
     st.divider()
     st.subheader("Histórico")
