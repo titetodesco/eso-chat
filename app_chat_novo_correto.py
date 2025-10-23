@@ -384,7 +384,7 @@ if titles:
     if st.sidebar.button("Carregar no rascunho", use_container_width=True, key="btn_load_prompt"):
         st.session_state.draft_prompt = body
         st.sidebar.success("Modelo carregado no rascunho.")
-        st.experimental_rerun()
+        st.rerun()
 else:
     st.sidebar.info(f"Nenhum prompt encontrado em {PROMPTS_MD_PATH} ({ptype}).")
 
