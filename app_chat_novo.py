@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-app_chat_novo.py — FINAL (v2 corrigido)
+app_chat_novo.py — FINAL (v3 corrigido)
 
 Correções desta versão:
 - LOCATION: agora é hidratado a partir de múltiplas fontes, nesta ordem: (1) coluna `LOCATION` no `data/analytics/sphera.parquet`; (2) campos de metadados no `data/analytics/sphera_embeddings.npz` (`LOCATION`, `location`, `locations`, ou `meta` com `LOCATION`); (3) Excel `data/xlsx/TRATADO_safeguardOffShore.xlsx` por merge usando chaves (`Event ID` ou `EVENT_NUMBER` ou `EVENTID`). Assim o filtro Location deixa de ficar vazio.
@@ -150,7 +150,7 @@ L_cp   = (pd.read_parquet(CP_LBL) if CP_LBL.exists() else None)
 @st.cache_data(show_spinner=False)
 def hydrate_location(df: pd.DataFrame, npz_path: Path, xlsx_path: Path) -> pd.DataFrame:
     d = df.copy()
-    # 1) Se já existe LOCATION no parquet, mantém
+    # 1) Já existe LOCATION no parquet?
     if "LOCATION" in d.columns and d["LOCATION"].notna().any():
         return d
     # 2) Tenta do NPZ: chaves esperadas ('LOCATION','location','locations','meta')
@@ -173,27 +173,47 @@ def hydrate_location(df: pd.DataFrame, npz_path: Path, xlsx_path: Path) -> pd.Da
                         return d
     except Exception:
         pass
-    # 3) Tenta Excel via merge por ID
+    # 3) Tenta Excel via merge por ID; se falhar, tenta alinhamento por índice
     if xlsx_path.exists():
         try:
-            xdf = pd.read_excel(xlsx_path)
-            # Detecta colunas de id e LOCATION no excel
-            id_cols_excel = [c for c in ["Event ID","EVENT_NUMBER","EVENTID"] if c in xdf.columns]
-            if "LOCATION" in xdf.columns and id_cols_excel:
-                # escolhe a melhor coluna-id do df_sph
-                id_cols_sph = [c for c in ["Event ID","EVENT_NUMBER","EVENTID"] if c in d.columns]
-                if id_cols_sph:
-                    key_sph  = id_cols_sph[0]
-                    key_xlsx = id_cols_excel[0]
-                    a = d.copy()
-                    a[key_sph]  = a[key_sph].astype(str)
-                    b = xdf[[key_xlsx,"LOCATION"]].copy()
-                    b[key_xlsx] = b[key_xlsx].astype(str)
-                    a = a.merge(b, left_on=key_sph, right_on=key_xlsx, how="left")
-                    if "LOCATION_y" in a.columns:
-                        a["LOCATION"] = a["LOCATION"].fillna(a["LOCATION_y"]) if "LOCATION" in a.columns else a["LOCATION_y"]
-                        a = a.drop(columns=[c for c in ["LOCATION_y","LOCATION_x", key_xlsx] if c in a.columns])
-                    d = a
+            xls = pd.ExcelFile(xlsx_path)
+            candidate = None
+            for sh in xls.sheet_names:
+                tmp = xls.parse(sh)
+                if "LOCATION" in tmp.columns and tmp["LOCATION"].notna().any():
+                    candidate = tmp
+                    break
+            if candidate is not None:
+                # normaliza colunas para facilitar matching
+                cand = candidate.copy()
+                # procura chaves em comum
+                df_keys  = [c for c in ["Event ID","EVENT_NUMBER","EVENTID"] if c in d.columns]
+                xls_keys = [c for c in ["Event ID","EVENT_NUMBER","EVENTID"] if c in cand.columns]
+                merged = None
+                if df_keys and xls_keys:
+                    key_d   = df_keys[0]
+                    key_xls = xls_keys[0]
+                    a = d.copy(); a[key_d] = a[key_d].astype(str)
+                    b = cand[[key_xls,"LOCATION"]].copy(); b[key_xls] = b[key_xls].astype(str)
+                    merged = a.merge(b, left_on=key_d, right_on=key_xls, how="left")
+                    if "LOCATION_y" in merged.columns:
+                        if "LOCATION" in merged.columns:
+                            merged["LOCATION"] = merged["LOCATION"].fillna(merged["LOCATION_y"])
+                        else:
+                            merged.rename(columns={"LOCATION_y":"LOCATION"}, inplace=True)
+                        merged.drop(columns=[c for c in ["LOCATION_y","LOCATION_x", key_xls] if c in merged.columns], inplace=True)
+                # fallback por índice (se mesmo comprimento)
+                if merged is None or "LOCATION" not in merged.columns or merged["LOCATION"].isna().all():
+                    if len(cand) == len(d):
+                        d["LOCATION"] = cand["LOCATION"].astype(str).values
+                        return d
+                    else:
+                        # tenta limitar candidate ao mesmo número de linhas do df
+                        if len(cand) > 0 and len(d) > 0:
+                            d["LOCATION"] = cand["LOCATION"].astype(str).iloc[:len(d)].values
+                            return d
+                else:
+                    d = merged
         except Exception:
             pass
     return d
@@ -468,7 +488,9 @@ def render_hits_table(hits: List[Tuple[str, float, pd.Series]]):
 
 
 def push_model(messages: List[Dict[str, str]], pergunta: str, contexto_md: str):
-    messages.append({"role": "user", "content": "DADOS DE APOIO (não responda aqui):\n" + contexto_md})
+    # Evita duplicar saída: só mostramos UMA vez aqui, e o histórico não será renderizado neste ciclo
+    messages.append({"role": "user", "content": "DADOS DE APOIO (não responda aqui):
+" + contexto_md})
     qt = pergunta or st.session_state.draft_prompt or "Analise os dados fornecidos e sintetize as lições."
     messages.append({"role": "user", "content": f"Pergunta: {qt}"})
     try:
@@ -480,7 +502,9 @@ def push_model(messages: List[Dict[str, str]], pergunta: str, contexto_md: str):
             content = "(Sem conteúdo do modelo)"
         with st.chat_message("assistant"):
             st.markdown(content)
+        # salva no histórico
         st.session_state.chat.append({"role": "assistant", "content": content})
+        st.session_state["_just_replied"] = True
     except Exception as e:
         st.error(f"Falha ao consultar modelo: {e}")
 
@@ -506,7 +530,7 @@ if go_btn:
         locations=locations,
     )
 
-    # 3) Renderiza hits (única tabela)
+    # 3) Renderiza hits (única tabela, sem duplicar)
     if hits:
         render_hits_table(hits)
     else:
@@ -549,11 +573,15 @@ if go_btn:
     messages = [{"role": "system", "content": st.session_state.system_prompt}, {"role": "user", "content": "\n\n".join([b for b in blocks if b])}]
     push_model(messages, user_text, "\n\n".join([x for x in ctx_chunks if x]))
 
-# ========================== Histórico (somente chat) ==========================
-if st.session_state.chat:
-    st.divider()
-    st.subheader("Histórico")
-    for m in st.session_state.chat[-10:]:
-        role = m.get("role","assistant")
-        with st.chat_message("assistant" if role != "user" else "user"):
-            st.markdown(m.get("content",""))
+# ========================== Histórico (somente chat, sem duplicar na mesma execução) ==========================
+if st.session_state.get("_just_replied"):
+    # Evita duplicar a resposta recém-exibida; limpa o flag para próximos ciclos
+    st.session_state["_just_replied"] = False
+else:
+    if st.session_state.chat:
+        st.divider()
+        st.subheader("Histórico")
+        for m in st.session_state.chat[-10:]:
+            role = m.get("role","assistant")
+            with st.chat_message("assistant" if role != "user" else "user"):
+                st.markdown(m.get("content",""))
