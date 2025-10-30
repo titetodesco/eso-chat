@@ -396,13 +396,21 @@ thr_sph = st.sidebar.slider("Limiar Sphera (cos)", 0.0, 1.0, 0.30, 0.01)
 years   = st.sidebar.slider("Últimos N anos", 1, 10, 3, 1)
 
 st.sidebar.subheader("Filtros avançados – Sphera")
-# multiselect de LOCATION após hidratação
-loc_options = []
+# LOCATION após hidratação — usa multiselect quando há opções; caso contrário, texto com ";" como fallback
+loc_options: List[str] = []
 if isinstance(df_sph, pd.DataFrame) and not df_sph.empty and "LOCATION" in df_sph.columns:
-    loc_options = sorted([x for x in df_sph["LOCATION"].dropna().astype(str).unique().tolist() if x])
+    loc_series = df_sph["LOCATION"].astype(str).str.strip()
+    loc_series = loc_series.replace({"": np.nan})
+    loc_options = sorted([x for x in loc_series.dropna().unique().tolist() if x])
 else:
     st.sidebar.info("Coluna LOCATION não encontrada — tentando hidratar de fontes auxiliares.")
-locations = st.sidebar.multiselect("Location", options=loc_options, default=[])
+
+if loc_options:
+    locations = st.sidebar.multiselect("Filtrar LOCATION (multiselect)", options=loc_options, default=[])
+else:
+    raw_locs = st.sidebar.text_input("Filtrar LOCATION (lista separada por ;)", "")
+    locations = [x.strip() for x in raw_locs.split(";") if x.strip()]
+
 substr    = st.sidebar.text_input("Description contém (substring)", "")
 
 st.sidebar.subheader("Agregação sobre eventos recuperados (Sphera)")
