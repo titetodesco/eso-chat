@@ -1,17 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-app_chat_novo.py — FINAL (v6 — filtro LOCATION fix)
+app_chat_novo.py — v7 (sem filtro LOCATION manual)
 
-Correções desta versão:
-- LOCATION: agora é hidratado a partir de múltiplas fontes, nesta ordem: (1) coluna `LOCATION` no `data/analytics/sphera.parquet`; (2) campos de metadados no `data/analytics/sphera_embeddings.npz` (`LOCATION`, `location`, `locations`, ou `meta` com `LOCATION`); (3) Excel `data/xlsx/TRATADO_safeguardOffShore.xlsx` por merge usando chaves (`Event ID` ou `EVENT_NUMBER` ou `EVENTID`). Assim o filtro Location deixa de ficar vazio.
-- Caminhos fixados em `data/analytics` para parquet/npz; Excel em `data/xlsx` e prompts/contexto em `data/`.
-- Execução somente ao clicar **"Enviar para o chat"** (uploads/inputs não disparam).
-- "Description" nas tabelas sai **completa** (sem truncar). Usei `st.dataframe` para melhor leitura quando for longa.
-- Botão **"Limpar rascunho"** corrigido com flag antes do widget (evita erro de `session_state`), e **"Limpar chat"** restaurado.
-- Removidas duplicidades de tabelas/saídas: fica **uma** tabela por execução ("Eventos do Sphera (Top-10)") e o histórico não reimprime os hits.
-- Mantidos todos os limiares: **Limiar Sphera (cos)**, **Limiar por evento (dicionários)**, **Limiar de similaridade WS/Precursor/CP**, **Suporte mínimo**, **Top-N** por família e **Agregação (max/mean)**.
+Alteração solicitada (baseada no arquivo enviado):
+- Removido do menu lateral o campo **"Filtrar LOCATION (lista separada por ;)"** / qualquer entrada manual de LOCATION.
+- Mantidas todas as demais funcionalidades e parâmetros.
+- A variável `locations` continua existindo e é enviada vazia para a função de busca (nenhum filtro de LOCATION é aplicado).
 
-Requisitos: streamlit, pandas, numpy, sentence-transformers, requests.
+Base: app_chat_novo.py FINAL (v3 corrigido) fornecido pelo usuário.
 """
 
 import os
@@ -48,6 +44,7 @@ HEADERS_JSON   = {"Authorization": f"Bearer {OLLAMA_API_KEY}", "Content-Type": "
 ST_MODEL_NAME = os.getenv("ST_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
 
 # ========================== Helpers base ==========================
+
 def _fatal(msg: str):
     st.error(msg)
     st.stop()
@@ -263,7 +260,7 @@ def filter_sphera(df: pd.DataFrame, locations: List[str], substr: str, years: in
         out["EVENT_DATE"] = pd.to_datetime(out["EVENT_DATE"], errors="coerce")
         cutoff = pd.Timestamp(datetime.utcnow() - timedelta(days=365*years))
         out = out[out["EVENT_DATE"] >= cutoff]
-    # filtro LOCATION (se existir)
+    # filtro LOCATION (se existir) — desativado se `locations` vazio
     if "LOCATION" in out.columns and locations:
         sel = set([str(x).strip() for x in locations if str(x).strip()])
         out = out[out["LOCATION"].astype(str).isin(sel)]
@@ -325,7 +322,7 @@ def aggregate_dict_matches_over_hits(
 ) -> Dict[str, List[Tuple[str, float, int]]]:
     if not hits:
         return {"ws": [], "prec": [], "cp": []}
-    descs = [str(r.get("Description", r.get("DESCRIPTION", ""))).strip() for _,_,r in hits]
+    descs = [str(r.get("Description", r.get("DESCRIPTION", "")).strip()) for _,_,r in hits]
     descs = [d for d in descs if d]
     if not descs:
         return {"ws": [], "prec": [], "cp": []}
@@ -367,26 +364,6 @@ def ollama_chat(messages, model=None, temperature=0.2, stream=False, timeout=120
     return r.json()
 
 # ========================== Sidebar ==========================
-# Opções de LOCATION SEM fallback para input livre. Sempre multiselect.
-@st.cache_data(show_spinner=False)
-def _build_location_options(df_full: pd.DataFrame) -> Tuple[Optional[str], List[str], int]:
-    loc_col = get_sphera_location_col(df_full)
-    if not loc_col:
-        return None, [], 0
-    s = df_full[loc_col].astype(str).str.strip()
-    s = s[(~s.isna()) & (s.str.len() > 0)]
-    bad = {"nan", "none", "n/d", "nd"}
-    s = s[~s.str.lower().isin(bad)]
-    n_unique_total = int(s.nunique(dropna=True))
-    # dedup case-insensitive preservando o primeiro
-    seen = {}
-    for v in s.tolist():
-        k = v.lower()
-        if k not in seen:
-            seen[k] = v
-    options = sorted(seen.values())
-    return loc_col, options, n_unique_total
-
 st.sidebar.subheader("Assistente de Prompts")
 prompts_bank = load_prompts_md(PROMPTS_MD_PATH)
 
@@ -406,9 +383,7 @@ if st.sidebar.button("Carregar no rascunho", use_container_width=True):
     if sel_upload != "(vazio)":
         body = next((it["body"] for it in prompts_bank["Upload"] if it["title"] == sel_upload), "")
         if body: draft.append(body)
-    st.session_state.draft_prompt = ("
-
-".join(draft)).strip()
+    st.session_state.draft_prompt = ("\n\n".join(draft)).strip()
     st.sidebar.success("Modelo(s) carregado(s) no rascunho.")
     st.rerun()
 
@@ -418,52 +393,13 @@ thr_sph = st.sidebar.slider("Limiar Sphera (cos)", 0.0, 1.0, 0.30, 0.01)
 years   = st.sidebar.slider("Últimos N anos", 1, 10, 3, 1)
 
 st.sidebar.subheader("Filtros avançados – Sphera")
-loc_col_sidebar, loc_options, n_unique_total = _build_location_options(df_sph)
-locations = st.sidebar.multiselect(
-    f"Location (coluna: {loc_col_sidebar or 'N/D'})",
-    options=loc_options,
-    default=[],
-    help="Lista vinda do dataframe completo hidratado. Use para filtrar os eventos Sphera por unidade/local."
-)
-# Depuração visível quando houver suspeita (ex.: apenas 1 opção)
-if len(loc_options) <= 1:
-    with st.sidebar.expander("Debug Location"):
-        st.write({
-            "col": loc_col_sidebar,
-            "n_options_sidebar": len(loc_options),
-            "n_unique_total_col": n_unique_total,
-            "exemplos": loc_options[:5],
-        })
-        if loc_col_sidebar:
-            st.dataframe(df_sph[[loc_col_sidebar]].head(20), use_container_width=True)
-
+# >>> REMOVIDO por solicitação: "Filtrar LOCATION (lista separada por ;)" e qualquer UI de LOCATION <<<
+# Mantemos apenas o filtro por substring de Description.
 substr = st.sidebar.text_input("Description contém (substring)", "")
-
-st.sidebar.subheader("Agregação sobre eventos recuperados (Sphera)")
-agg_mode    = st.sidebar.selectbox("Agregação", ["max", "mean"], index=0)
-per_ev_thr  = st.sidebar.slider("Limiar por evento (dicionários)", 0.0, 1.0, 0.30, 0.01)
-min_support = st.sidebar.slider("Suporte mínimo (nº de eventos)", 1, 20, 1, 1)
-
-# Limiares de similaridade por família (mantidos)
-thr_ws_sim   = st.sidebar.slider("Limiar de similaridade WS", 0.0, 1.0, 0.25, 0.01)
-thr_prec_sim = st.sidebar.slider("Limiar de similaridade Precursor", 0.0, 1.0, 0.25, 0.01)
-thr_cp_sim   = st.sidebar.slider("Limiar de similaridade CP", 0.0, 1.0, 0.25, 0.01)
-
-topn_ws   = st.sidebar.slider("Top-N WS", 3, 90, 10, 1)
-topn_prec = st.sidebar.slider("Top-N Precursores", 3, 90, 10, 1)
-topn_cp   = st.sidebar.slider("Top-N CP", 3, 90, 10, 1)
-
-# Utilidades
-uc1, uc2 = st.sidebar.columns(2)
-with uc1:
-    if st.button("Limpar uploads", use_container_width=True):
-        st.session_state.pop("upld_texts", None)
-        st.session_state.upld_texts = []
-        st.rerun()
-with uc2:
-    if st.button("Limpar chat", use_container_width=True):
-        st.session_state.chat = []
-        st.rerun()
+# variável locations é mantida vazia para compatibilidade com a pipeline
+actions_info = "Filtro de LOCATION desativado a pedido — filtragem por unidade será feita no prompt/modelo."
+st.sidebar.caption(actions_info)
+locations: List[str] = []
 
 st.sidebar.subheader("Agregação sobre eventos recuperados (Sphera)")
 agg_mode    = st.sidebar.selectbox("Agregação", ["max", "mean"], index=0)
@@ -549,8 +485,7 @@ def render_hits_table(hits: List[Tuple[str, float, pd.Series]]):
 
 def push_model(messages: List[Dict[str, str]], pergunta: str, contexto_md: str):
     # Evita duplicar saída: só mostramos UMA vez aqui, e o histórico não será renderizado neste ciclo
-    messages.append({"role": "user", "content": "DADOS DE APOIO (não responda aqui):
-" + contexto_md})
+    messages.append({"role": "user", "content": "DADOS DE APOIO (não responda aqui):\n" + contexto_md})
     qt = pergunta or st.session_state.draft_prompt or "Analise os dados fornecidos e sintetize as lições."
     messages.append({"role": "user", "content": f"Pergunta: {qt}"})
     try:
@@ -587,7 +522,7 @@ if go_btn:
         df_base=df_sph,
         E_base=E_sph,
         substr=substr,
-        locations=locations,
+        locations=locations,  # vazio por design
     )
 
     # 3) Renderiza hits (única tabela, sem duplicar)
