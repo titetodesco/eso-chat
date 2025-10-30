@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-app_chat_novo.py — FINAL (v4 corrigido)
+App Chat Novo — v5 killer
 
-Correções principais nesta versão:
-- **Filtro Location**: agora usa `get_sphera_location_col(df)` (prioridade: LOCATION → FPSO → Location → FPSO/Unidade → Unidade; **nunca** AREA) para
-  *popular o multiselect* a partir do **dataframe completo hidratado** (sem filtros aplicados) e para **aplicar** o filtro.
-- **Hidratação de LOCATION**: parquet → npz (LOCATION/location/locations/meta) → Excel (merge por Event ID/EVENT_NUMBER/EVENTID; fallback por índice se necessário).
-- Mantidas todas funcionalidades pedidas nas versões anteriores (somente Sphera, dicionários, limiares, prompts, limpar chat/uploads/rascunho, execução apenas ao clicar, sem duplicações, Description completa).
+Foco desta versão:
+- **Filtro Location impecável**: detecção de coluna dinâmica (LOCATION → FPSO → Location → FPSO/Unidade → Unidade) com hidratação multi‑fonte
+  (parquet → npz → excel por chave/índice). Multiselect sempre baseado no **dataframe completo já hidratado**.
+- **Depuração embutida** (expander "Debug Location") quando forem encontradas menos de 2 opções de LOCATION.
+- Mantidas todas funcionalidades anteriores (somente Sphera, dicionários, limiares, prompts, limpar chat/uploads/rascunho, execução só ao clicar,
+  descrição completa, sem duplicações de saída).
 """
 
 import os, re, io
@@ -29,7 +30,7 @@ SPH_PQ_PATH  = AN_DIR/"sphera.parquet"
 SPH_NPZ_PATH = AN_DIR/"sphera_embeddings.npz"
 XLSX_LOCATION_PATH = XLSX_DIR/"TRATADO_safeguardOffShore.xlsx"
 
-# Modelo (Ollama por padrão)
+# Modelo
 OLLAMA_HOST    = st.secrets.get("OLLAMA_HOST", os.getenv("OLLAMA_HOST", ""))
 OLLAMA_MODEL   = st.secrets.get("OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", ""))
 OLLAMA_API_KEY = st.secrets.get("OLLAMA_API_KEY", os.getenv("OLLAMA_API_KEY"))
@@ -39,8 +40,7 @@ ST_MODEL_NAME = os.getenv("ST_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-
 
 # ========================== Helpers ==========================
 
-def _fatal(msg: str):
-    st.error(msg); st.stop()
+def _fatal(msg: str): st.error(msg); st.stop()
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -60,14 +60,12 @@ def load_npz_embeddings(path: Path) -> Optional[np.ndarray]:
             for key in ("embeddings","E","X","vectors","vecs"):
                 if key in z:
                     E = np.array(z[key]).astype(np.float32, copy=False)
-                    n = np.linalg.norm(E,1,keepdims=False) # dummy to avoid linter
                     n = np.linalg.norm(E, axis=1, keepdims=True) + 1e-9
                     return (E/n).astype(np.float32)
-            # fallback: maior matriz 2D
             best_k, best_n = None, -1
             for k in z.files:
                 arr = z[k]
-                if isinstance(arr,np.ndarray) and arr.ndim==2 and arr.shape[0]>best_n:
+                if isinstance(arr, np.ndarray) and arr.ndim==2 and arr.shape[0]>best_n:
                     best_k, best_n = k, arr.shape[0]
             if best_k is None: return None
             E = np.array(z[best_k]).astype(np.float32, copy=False)
@@ -82,9 +80,9 @@ def load_prompts_md(md_path: Path) -> Dict[str, List[Dict[str,str]]]:
     raw = md_path.read_text(encoding="utf-8"); sections = re.split(r"(?m)^##\s+", raw)
     out = {"Texto":[],"Upload":[]}
     for sec in sections:
-        sec = sec.strip();
+        sec=sec.strip();
         if not sec: continue
-        head, _, body = sec.partition("\n"); head = head.strip()
+        head, _, body = sec.partition("\n"); head=head.strip()
         if head not in ("Texto","Upload"): continue
         parts = re.split(r"(?m)^###\s+", body)
         for p in parts:
@@ -102,9 +100,7 @@ def load_file_text(p: Path) -> str:
 # ========================== Location utils ==========================
 
 def get_sphera_location_col(df: pd.DataFrame) -> Optional[str]:
-    """Retorna a melhor coluna de Location.
-    Prioridade: LOCATION → FPSO → Location → FPSO/Unidade → Unidade. Nunca AREA.
-    """
+    """Retorna a melhor coluna de Location. Prioridade: LOCATION → FPSO → Location → FPSO/Unidade → Unidade. Nunca AREA."""
     if df is None or df.empty: return None
     for c in ["LOCATION","FPSO","Location","FPSO/Unidade","Unidade"]:
         if c in df.columns: return c
@@ -120,31 +116,30 @@ def hydrate_location(df: pd.DataFrame, npz_path: Path, xlsx_path: Path) -> pd.Da
     try:
         if npz_path.exists():
             with np.load(str(npz_path), allow_pickle=True) as z:
-                loc_arr = None
+                loc_arr=None
                 for k in ("LOCATION","location","locations"):
-                    if k in z: loc_arr = z[k]; break
+                    if k in z: loc_arr=z[k]; break
                 if loc_arr is None and "meta" in z:
                     meta = z["meta"].item() if isinstance(z["meta"], np.ndarray) else z["meta"]
                     if isinstance(meta, dict): loc_arr = meta.get("LOCATION") or meta.get("location")
                 if loc_arr is not None:
-                    loc_arr = np.asarray(loc_arr)
-                    if loc_arr.shape[0] == len(d):
-                        d["LOCATION"] = pd.Series(loc_arr).astype(str)
-                        return d
+                    loc_arr=np.asarray(loc_arr)
+                    if loc_arr.shape[0]==len(d):
+                        d["LOCATION"]=pd.Series(loc_arr).astype(str); return d
     except Exception:
         pass
-    # 3) Excel: merge por chave ou alinhamento por índice
+    # 3) Excel por chave/índice
     if xlsx_path.exists():
         try:
-            xls = pd.ExcelFile(xlsx_path); candidate=None
+            xls=pd.ExcelFile(xlsx_path); candidate=None
             for sh in xls.sheet_names:
-                tmp = xls.parse(sh)
+                tmp=xls.parse(sh)
                 if "LOCATION" in tmp.columns and tmp["LOCATION"].notna().any():
-                    candidate = tmp; break
+                    candidate=tmp; break
             if candidate is not None:
                 cand=candidate.copy()
-                df_keys  = [c for c in ["Event ID","EVENT_NUMBER","EVENTID"] if c in d.columns]
-                xls_keys = [c for c in ["Event ID","EVENT_NUMBER","EVENTID"] if c in cand.columns]
+                df_keys=[c for c in ["Event ID","EVENT_NUMBER","EVENTID"] if c in d.columns]
+                xls_keys=[c for c in ["Event ID","EVENT_NUMBER","EVENTID"] if c in cand.columns]
                 merged=None
                 if df_keys and xls_keys:
                     kd, kx = df_keys[0], xls_keys[0]
@@ -153,7 +148,7 @@ def hydrate_location(df: pd.DataFrame, npz_path: Path, xlsx_path: Path) -> pd.Da
                     merged=a.merge(b, left_on=kd, right_on=kx, how="left")
                     if "LOCATION_y" in merged.columns:
                         if "LOCATION" in merged.columns:
-                            merged["LOCATION"]=merged["LOCATION"].fillna(merged["LOCATION_y"]) 
+                            merged["LOCATION"] = merged["LOCATION"].fillna(merged["LOCATION_y"])
                         else:
                             merged.rename(columns={"LOCATION_y":"LOCATION"}, inplace=True)
                         merged.drop(columns=[c for c in ["LOCATION_y","LOCATION_x",kx] if c in merged.columns], inplace=True)
@@ -168,7 +163,7 @@ def hydrate_location(df: pd.DataFrame, npz_path: Path, xlsx_path: Path) -> pd.Da
             pass
     return d
 
-# ========================== Carregamento dados ==========================
+# ========================== Carregamento base ==========================
 if not SPH_PQ_PATH.exists(): st.error(f"Parquet do Sphera não encontrado em {SPH_PQ_PATH}")
 
 df_sph = pd.read_parquet(SPH_PQ_PATH) if SPH_PQ_PATH.exists() else pd.DataFrame()
@@ -197,6 +192,7 @@ if "chat" not in st.session_state: st.session_state.chat=[]
 if "draft_prompt" not in st.session_state: st.session_state.draft_prompt=""
 if "_clear_draft_flag" not in st.session_state: st.session_state._clear_draft_flag=False
 if "st_encoder" not in st.session_state: st.session_state.st_encoder = ensure_st_encoder()
+if "upld_texts" not in st.session_state: st.session_state.upld_texts=[]
 
 # ========================== Encode ==========================
 @st.cache_data(show_spinner=False)
@@ -219,12 +215,10 @@ def filter_sphera(df: pd.DataFrame, locations: List[str], substr: str, years: in
         out["EVENT_DATE"]=pd.to_datetime(out["EVENT_DATE"], errors="coerce")
         cutoff = pd.Timestamp(datetime.utcnow()-timedelta(days=365*years))
         out = out[out["EVENT_DATE"]>=cutoff]
-    # Location com coluna escolhida dinamicamente
     loc_col = get_sphera_location_col(out)
     if loc_col and locations:
         sel = set([str(x).strip() for x in locations if str(x).strip()])
         out = out[out[loc_col].astype(str).isin(sel)]
-    # Substring
     desc_col = "Description" if "Description" in out.columns else ("DESCRIPTION" if "DESCRIPTION" in out.columns else None)
     if desc_col and substr:
         pat=re.escape(substr); out = out[out[desc_col].astype(str).str.contains(pat, case=False, na=False, regex=True)]
@@ -247,7 +241,8 @@ def sphera_similar_to_text(query_text: str, min_sim: float, years: int, topk: in
     id_col = next((c for c in ["Event ID","EVENT_NUMBER","EVENTID"] if c in base.columns), None)
     out=[]; kept=0
     for i in ord_idx:
-        s=float(sims[i]); if s<min_sim: continue
+        s=float(sims[i]);
+        if s<min_sim: continue
         row=base.iloc[int(i)]; evid = row.get(id_col, f"row{i}") if id_col else f"row{i}"
         out.append((str(evid), s, row)); kept+=1
         if kept>=topk: break
@@ -331,8 +326,17 @@ st.sidebar.subheader("Filtros avançados – Sphera")
 loc_col_sidebar, loc_options = _location_options_from(df_sph)
 locations = st.sidebar.multiselect(
     f"Location (coluna: {loc_col_sidebar or 'N/D'})", options=loc_options, default=[],
-    help="Lista montada do dataframe completo (após hidratação, antes de filtros)."
+    help="Lista montada do dataframe completo (após hidratação)."
 )
+if len(loc_options) < 2:
+    with st.sidebar.expander("Debug Location"):
+        st.write({
+            "tem_col": bool(loc_col_sidebar),
+            "col": loc_col_sidebar,
+            "n_options": len(loc_options),
+            "n_unique_total": int(df_sph[loc_col_sidebar].astype(str).nunique()) if loc_col_sidebar else 0,
+        })
+        st.dataframe(df_sph[[loc_col_sidebar]].head(12) if loc_col_sidebar else pd.DataFrame(), use_container_width=True)
 substr = st.sidebar.text_input("Description contém (substring)", "")
 
 st.sidebar.subheader("Agregação sobre eventos recuperados (Sphera)")
@@ -375,7 +379,6 @@ if uploaded is not None:
             as_text="\n".join(dfcsv.astype(str).fillna("").apply(lambda r:" ".join(r.values), axis=1).tolist())
         except Exception: pass
     if as_text:
-        st.session_state.setdefault("upld_texts", [])
         st.session_state.upld_texts.append(as_text)
         st.success(f"Upload recebido: {uploaded.name} (armazenado no contexto local).")
 
@@ -383,20 +386,20 @@ col_run1,col_run2,col_run3 = st.columns([1,1,1])
 go_btn      = col_run1.button("Enviar para o chat", type="primary", use_container_width=True)
 clear_draft = col_run2.button("Limpar rascunho", use_container_width=True)
 clear_chat  = col_run3.button("Limpar chat", use_container_width=True)
-if clear_draft:
-    st.session_state._clear_draft_flag=True; st.rerun()
-if clear_chat:
-    st.session_state.chat=[]; st.rerun()
+if clear_draft: st.session_state._clear_draft_flag=True; st.rerun()
+if clear_chat:  st.session_state.chat=[]; st.rerun()
 
 # ========================== Execução ==========================
 
 def render_hits_table(hits: List[Tuple[str,float,pd.Series]]):
     if not hits: return
-    rows=[]; loc_col = get_sphera_location_col(hits[0][2].to_frame().T)
+    first_row_df = hits[0][2].to_frame().T
+    loc_col = get_sphera_location_col(first_row_df) or "LOCATION"
+    rows=[]
     for evid,s,row in hits[:min(10,len(hits))]:
-        loc_val = str(row.get(loc_col, row.get("LOCATION","N/D"))) if loc_col else str(row.get("LOCATION","N/D"))
+        loc_val = str(row.get(loc_col, row.get("LOCATION","N/D")))
         desc = str(row.get("Description", row.get("DESCRIPTION",""))).strip()
-        rows.append({"Event ID":evid,"Similaridade":round(s,3),"LOCATION":loc_val,"Description":desc})
+        rows.append({"Event ID":evid, "Similaridade":round(s,3), "LOCATION":loc_val, "Description":desc})
     st.markdown("**Eventos do Sphera (Top-10)**")
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
@@ -420,7 +423,7 @@ if go_btn:
     blocks=[]
     if st.session_state.draft_prompt.strip(): blocks.append("PROMPT:\n"+st.session_state.draft_prompt.strip())
     if (user_text or "").strip(): blocks.append("TEXTO:\n"+user_text.strip())
-    for i,t in enumerate(st.session_state.get("upld_texts", [])): blocks.append(f"UPLOAD[{i+1}]:\n"+t.strip())
+    for i,t in enumerate(st.session_state.upld_texts or []): blocks.append(f"UPLOAD[{i+1}]:\n"+t.strip())
 
     hits = sphera_similar_to_text(
         query_text=(user_text or st.session_state.draft_prompt),
@@ -460,7 +463,7 @@ if go_btn:
     messages=[{"role":"system","content":st.session_state.system_prompt}, {"role":"user","content":"\n\n".join([b for b in blocks if b])}]
     push_model(messages, user_text, "\n\n".join([x for x in ctx_chunks if x]))
 
-# ========================== Histórico (sem duplicar no mesmo ciclo) ==========================
+# ========================== Histórico (sem duplicate no mesmo ciclo) ==========================
 if st.session_state.get("_just_replied"):
     st.session_state["_just_replied"]=False
 else:
