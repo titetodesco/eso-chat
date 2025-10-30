@@ -406,9 +406,7 @@ if st.sidebar.button("Carregar no rascunho", use_container_width=True):
     if sel_upload != "(vazio)":
         body = next((it["body"] for it in prompts_bank["Upload"] if it["title"] == sel_upload), "")
         if body: draft.append(body)
-    st.session_state.draft_prompt = ("
-
-".join(draft)).strip()
+    st.session_state.draft_prompt = ("".join(draft)).strip()
     st.sidebar.success("Modelo(s) carregado(s) no rascunho.")
     st.rerun()
 
