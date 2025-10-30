@@ -367,6 +367,32 @@ def ollama_chat(messages, model=None, temperature=0.2, stream=False, timeout=120
     return r.json()
 
 # ========================== Sidebar ==========================
+# Helper para listar opções de LOCATION de forma robusta (case-insensitive, sem vazios)
+@st.cache_data(show_spinner=False)
+def _get_location_options(df: pd.DataFrame) -> List[str]:
+    if df is None or df.empty:
+        return []
+    col = None
+    if "LOCATION" in df.columns:
+        col = "LOCATION"
+    elif "Location" in df.columns:  # fallback apenas para popular opções
+        col = "Location"
+    if col is None:
+        return []
+    s = df[col].astype(str).str.strip()
+    s = s[~s.isna()]
+    s = s[s.str.len() > 0]
+    # remove marcadores indesejados
+    bad = {"nan", "none", "n/d", "nd"}
+    s = s[~s.str.lower().isin(bad)]
+    # dedup case-insensitive preservando o primeiro
+    seen = {}
+    for v in s:
+        k = v.lower()
+        if k not in seen:
+            seen[k] = v
+    return sorted(seen.values())
+
 st.sidebar.subheader("Assistente de Prompts")
 prompts_bank = load_prompts_md(PROMPTS_MD_PATH)
 
@@ -386,7 +412,9 @@ if st.sidebar.button("Carregar no rascunho", use_container_width=True):
     if sel_upload != "(vazio)":
         body = next((it["body"] for it in prompts_bank["Upload"] if it["title"] == sel_upload), "")
         if body: draft.append(body)
-    st.session_state.draft_prompt = ("\n\n".join(draft)).strip()
+    st.session_state.draft_prompt = ("
+
+".join(draft)).strip()
     st.sidebar.success("Modelo(s) carregado(s) no rascunho.")
     st.rerun()
 
@@ -396,22 +424,38 @@ thr_sph = st.sidebar.slider("Limiar Sphera (cos)", 0.0, 1.0, 0.30, 0.01)
 years   = st.sidebar.slider("Últimos N anos", 1, 10, 3, 1)
 
 st.sidebar.subheader("Filtros avançados – Sphera")
-# LOCATION após hidratação — usa multiselect quando há opções; caso contrário, texto com ";" como fallback
-loc_options: List[str] = []
-if isinstance(df_sph, pd.DataFrame) and not df_sph.empty and "LOCATION" in df_sph.columns:
-    loc_series = df_sph["LOCATION"].astype(str).str.strip()
-    loc_series = loc_series.replace({"": np.nan})
-    loc_options = sorted([x for x in loc_series.dropna().unique().tolist() if x])
-else:
-    st.sidebar.info("Coluna LOCATION não encontrada — tentando hidratar de fontes auxiliares.")
-
-if loc_options:
-    locations = st.sidebar.multiselect("Filtrar LOCATION (multiselect)", options=loc_options, default=[])
-else:
-    raw_locs = st.sidebar.text_input("Filtrar LOCATION (lista separada por ;)", "")
-    locations = [x.strip() for x in raw_locs.split(";") if x.strip()]
-
+loc_options = _get_location_options(df_sph)
+locations = st.sidebar.multiselect(
+    "Location (multiselect)", options=loc_options, default=[],
+    help="Selecione um ou mais LOCATION. Se a lista estiver vazia, revise a hidratação da coluna LOCATION."
+)
 substr    = st.sidebar.text_input("Description contém (substring)", "")
+
+st.sidebar.subheader("Agregação sobre eventos recuperados (Sphera)")
+agg_mode    = st.sidebar.selectbox("Agregação", ["max", "mean"], index=0)
+per_ev_thr  = st.sidebar.slider("Limiar por evento (dicionários)", 0.0, 1.0, 0.30, 0.01)
+min_support = st.sidebar.slider("Suporte mínimo (nº de eventos)", 1, 20, 1, 1)
+
+# Limiares de similaridade por família (mantidos)
+thr_ws_sim   = st.sidebar.slider("Limiar de similaridade WS", 0.0, 1.0, 0.25, 0.01)
+thr_prec_sim = st.sidebar.slider("Limiar de similaridade Precursor", 0.0, 1.0, 0.25, 0.01)
+thr_cp_sim   = st.sidebar.slider("Limiar de similaridade CP", 0.0, 1.0, 0.25, 0.01)
+
+topn_ws   = st.sidebar.slider("Top-N WS", 3, 90, 10, 1)
+topn_prec = st.sidebar.slider("Top-N Precursores", 3, 90, 10, 1)
+topn_cp   = st.sidebar.slider("Top-N CP", 3, 90, 10, 1)
+
+# Utilidades
+uc1, uc2 = st.sidebar.columns(2)
+with uc1:
+    if st.button("Limpar uploads", use_container_width=True):
+        st.session_state.pop("upld_texts", None)
+        st.session_state.upld_texts = []
+        st.rerun()
+with uc2:
+    if st.button("Limpar chat", use_container_width=True):
+        st.session_state.chat = []
+        st.rerun()
 
 st.sidebar.subheader("Agregação sobre eventos recuperados (Sphera)")
 agg_mode    = st.sidebar.selectbox("Agregação", ["max", "mean"], index=0)
