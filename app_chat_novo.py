@@ -547,8 +547,7 @@ def render_hits_table(hits: List[Tuple[str, float, pd.Series]]):
 
 def push_model(messages: List[Dict[str, str]], pergunta: str, contexto_md: str):
     # Evita duplicar saída: só mostramos UMA vez aqui, e o histórico não será renderizado neste ciclo
-    messages.append({"role": "user", "content": "DADOS DE APOIO (não responda aqui):
-" + contexto_md})
+    messages.append({"role": "user", "content": "DADOS DE APOIO (não responda aqui):" + contexto_md})
     qt = pergunta or st.session_state.draft_prompt or "Analise os dados fornecidos e sintetize as lições."
     messages.append({"role": "user", "content": f"Pergunta: {qt}"})
     try:
