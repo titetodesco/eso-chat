@@ -20,7 +20,7 @@ import pandas as pd
 import streamlit as st
 
 # ========================== Config ==========================
-st.set_page_config(page_title="ESO • CHAT", page_icon="💬", layout="wide")
+st.set_page_config(page_title="SAFETY • CHAT", page_icon="💬", layout="wide")
 
 DATA_DIR = Path("data"); AN_DIR = DATA_DIR/"analytics"; XLSX_DIR = DATA_DIR/"xlsx"
 DATASETS_CONTEXT_PATH = DATA_DIR/"datasets_context.md"
