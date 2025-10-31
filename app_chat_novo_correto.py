@@ -21,7 +21,7 @@ import requests
 import streamlit as st
 
 # ========================== Config inicial ==========================
-st.set_page_config(page_title="ESO • CHAT", page_icon="💬", layout="wide")
+st.set_page_config(page_title="SAFETY • CHAT", page_icon="💬", layout="wide")
 
 DATA_DIR = "data"
 AN_DIR   = os.path.join(DATA_DIR, "analytics")
@@ -437,7 +437,7 @@ with c2:
             st.rerun()
 
 # ========================== UI central ==========================
-st.title("ESO • CHAT (modelo-first)")
+st.title("SAFETY • CHAT")
 
 # Rascunho de prompt
 st.text_area("Conteúdo do prompt", key="draft_prompt", height=180, placeholder="Digite ou carregue um modelo de prompt...")
