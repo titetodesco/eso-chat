@@ -364,7 +364,7 @@ with uc2:
 if st.session_state._clear_draft_flag:
     st.session_state.draft_prompt=""; st.session_state._clear_draft_flag=False
 
-st.title("ESO • CHAT (Somente Sphera)")
+st.title("SAFETY • CHAT (Somente Sphera)")
 st.text_area("Conteúdo do prompt", key="draft_prompt", height=180, placeholder="Digite ou carregue um modelo de prompt…")
 user_text = st.text_area("Texto de análise (para Sphera)", height=200, placeholder="Cole aqui a descrição/evento a analisar…")
 
