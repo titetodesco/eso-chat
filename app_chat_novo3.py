@@ -138,7 +138,7 @@ else:
         st.rerun()
 
 # ---------- Config básica ----------
-st.set_page_config(page_title="ESO • CHAT (Embeddings)", page_icon="💬", layout="wide")
+st.set_page_config(page_title="SAFETY • CHAT", page_icon="💬", layout="wide")
 
 DATA_DIR = "data"
 AN_DIR = os.path.join(DATA_DIR, "analytics")
@@ -1029,7 +1029,7 @@ def _send_prompt_to_chat():
     st.rerun()
 
 # ---------- UI ----------
-st.title("ESO • CHAT — HIST + UPLD (Embeddings preferencial) + Dicionários PT/EN")
+st.title("SAFETY • CHAT — HIST + UPLD (Embeddings preferencial) + Dicionários PT/EN")
 st.caption("RAG local (Sphera / GoSee / Docs / Upload) + WS/Precursores/CP com seleção automática de idioma.")
 
 # Mostrar histórico
