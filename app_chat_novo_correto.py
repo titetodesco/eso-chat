@@ -381,6 +381,71 @@ def debug_preview_dicts(hits, E_ws, L_ws, E_prec, L_prec, E_cp, L_cp, topk=10):
             st.markdown("**CP (max entre eventos, sem limiares)**")
             st.dataframe(_topk_raw_for_bank(E_cp, L_cp, V_desc, topk), use_container_width=True, hide_index=True)
 
+# ===== Hints por evento (ancoragem por EventID) =====
+
+def build_event_hints(
+    hits: List[Tuple[str, float, pd.Series]],
+    E_ws, L_ws, E_prec, L_prec, E_cp, L_cp,
+    per_event_thr: float,
+    top_per_family: int = 3,
+) -> Tuple[str, np.ndarray | None]:
+    """
+    Retorna (EVENT_HINTS_MD, V_desc) onde EVENT_HINTS_MD contém, por EventID,
+    até `top_per_family` termos por família (WS/PRE/CP) cuja similaridade com a
+    descrição do evento é >= per_event_thr. Se não houver termos para o evento,
+    coloca '—'.
+    """
+    if not hits:
+        return "=== EVENT_HINTS ===
+[NENHUM HIT]
+", None
+
+    # Embeddings das descrições (D x M)
+    descs = [str(r.get("Description", r.get("DESCRIPTION",""))).strip() for _,_,r in hits]
+    descs = [d for d in descs if d]
+    if not descs:
+        return "=== EVENT_HINTS ===
+[SEM DESCRIÇÕES VÁLIDAS]
+", None
+    V_desc = encode_texts(descs, batch_size=32).T  # (D x M)
+
+    def _labels_col(df):
+        return next((c for c in ["label","text","name","CP","cp"] if (df is not None and c in df.columns)), None)
+
+    lines = ["=== EVENT_HINTS ==="]
+    families = [
+        ("WS",  E_ws,   L_ws),
+        ("PRE", E_prec, L_prec),
+        ("CP",  E_cp,   L_cp),
+    ]
+
+    M = V_desc.shape[1]
+    for ev_idx, (evid, _, row) in enumerate(hits[:M]):
+        ev_terms = []
+        for fam_name, E_bank, L_bank in families:
+            if E_bank is None or L_bank is None or len(L_bank) != E_bank.shape[0]:
+                continue
+            S = (E_bank @ V_desc[:, [ev_idx]]).squeeze(axis=1)  # (N_terms,)
+            idx = np.where(S >= per_event_thr)[0]
+            if idx.size == 0:
+                continue
+            order = idx[np.argsort(S[idx])[::-1]][:top_per_family]
+            labcol = _labels_col(L_bank)
+            fam_lines = []
+            for i in order:
+                lab = str(L_bank.iloc[i].get(labcol, f"TERM_{i}"))
+                fam_lines.append(f"{lab} (sim={float(S[i]):.3f})")
+            if fam_lines:
+                ev_terms.append(f"{fam_name}: " + "; ".join(fam_lines))
+        if ev_terms:
+            lines.append(f"[EventID={evid}] " + " | ".join(ev_terms))
+        else:
+            lines.append(f"[EventID={evid}] —")
+
+    return "
+".join(lines) + "
+", V_desc
+
 # ========================== Modelo ==========================
 
 def ollama_chat(messages, model=None, temperature=0.2, stream=False, timeout=120):
@@ -505,6 +570,27 @@ def render_hits_table(hits: List[Tuple[str, float, pd.Series]]):
 def push_model(messages: List[Dict[str, str]], pergunta: str, contexto_md: str, dic_matches_md: str):
     # Guardrails para impedir invenção de termos fora dos dicionários
     guardrails = (
+        "REGRAS PARA WS/PRECURSORES/CP:
+"
+        "- Use EXCLUSIVAMENTE os termos listados em DIC_MATCHES para nomear WS/Precursores/CP.
+"
+        "- NÃO crie categorias novas nem traduza/alterar rótulos.
+"
+        "- Se a lista estiver vazia, escreva 'nenhum termo ≥ limiar'.
+"
+        "- Quando citar um termo, mantenha o rótulo exatamente como fornecido.
+"
+        "
+"
+        "REGRAS PARA A COLUNA 'Observações/Precursores relevantes':
+"
+        "- Para cada EventID, escolha no máximo 2 termos dentre os sugeridos em EVENT_HINTS (quando houver).
+"
+        "- Não repita o mesmo termo em mais de 50% dos eventos; prefira diversidade baseada em EVENT_HINTS.
+"
+        "- Se um evento não tiver termos em EVENT_HINTS, use '—' nessa coluna (não invente).
+"
+    )
         "REGRAS PARA WS/PRECURSORES/CP:\n"
         "- Use EXCLUSIVAMENTE os termos listados em DIC_MATCHES.\n"
         "- NÃO crie categorias novas nem traduza/alterar rótulos.\n"
@@ -560,6 +646,13 @@ if go_btn:
     # Depuração (opcional): mostra Top-N brutos para confirmar que o espaço vetorial está ok
     debug_preview_dicts(hits, E_ws, L_ws, E_prec, L_prec, E_cp, L_cp, topk=10)
 
+    # Hints por evento (para ancorar as observações do modelo)
+    EVENT_HINTS_MD, _Vdesc = build_event_hints(
+        hits, E_ws, L_ws, E_prec, L_prec, E_cp, L_cp,
+        per_event_thr=per_ev_thr,
+        top_per_family=3,
+    )
+
     # Bloco estruturado com os termos encontrados para passar ao LLM
     def _fmt_list(name, arr):
         if not arr:
@@ -594,9 +687,17 @@ if go_btn:
 
     messages = [
         {"role": "system", "content": st.session_state.system_prompt},
-        {"role": "user", "content": "\n\n".join([b for b in blocks if b])},
+        {"role": "user", "content": "
+
+".join([b for b in blocks if b])},
     ]
-    push_model(messages, user_text, "\n\n".join([x for x in ctx_chunks if x]), DIC_MATCHES_MD)
+    # Anexamos também os EVENT_HINTS ao contexto para o LLM ancorar por linha
+    ctx_full = "
+
+".join([x for x in ctx_chunks if x]) + "
+
+" + EVENT_HINTS_MD
+    push_model(messages, user_text, ctx_full, DIC_MATCHES_MD)
 
 # ========================== Histórico ==========================
 if st.session_state.get("_just_replied"):
