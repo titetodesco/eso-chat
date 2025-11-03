@@ -669,12 +669,12 @@ if go_btn:
     ]
 
     messages = [
-        {"role": "system", "content": st.session_state.system_prompt},
-        {"role": "user", "content": "".join([b for b in blocks if b])},
+       {"role": "system", "content": st.session_state.system_prompt},
+       {"role": "user",   "content": "\n\n".join(filter(None, blocks))},
     ]
-    # Anexamos também os EVENT_HINTS ao contexto para o LLM ancorar por linha
-    ctx_full = " ".join([x for x in ctx_chunks if x]) + "" + EVEN T_HINTS_MD
+    ctx_full = "\n\n".join(filter(None, ctx_chunks)) + "\n\n" + EVENT_HINTS_MD
     push_model(messages, user_text, ctx_full, DIC_MATCHES_MD)
+   
 
 # ========================== Histórico ==========================
 if st.session_state.get("_just_replied"):
