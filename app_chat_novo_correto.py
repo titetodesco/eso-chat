@@ -404,7 +404,7 @@ sph_loc_selected  = st.sidebar.text_input("Filtrar LOCATION (lista separada por 
 
 st.sidebar.subheader("Agregação sobre eventos recuperados (Sphera)")
 agg_mode     = st.sidebar.selectbox("Agregação", ["max", "mean"], index=0)
-per_ev_thr   = st.sidebar.slider("Limiar por evento (dicionários)", 0.0, 1.0, 0.30, 0.01)
+per_ev_thr  = st.sidebar.slider("Limiar por evento (dicionários)", 0.0, 1.0, 0.15, 0.01)
 min_support  = st.sidebar.slider("Suporte mínimo (nº de eventos)", 1, 20, 2, 1)
 thr_ws       = st.sidebar.slider("Limiar global WS", 0.0, 1.0, 0.25, 0.01)
 thr_prec     = st.sidebar.slider("Limiar global Precursores", 0.0, 1.0, 0.25, 0.01)
