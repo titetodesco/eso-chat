@@ -117,12 +117,28 @@ def load_file_text(p: Path) -> str:
     except Exception as e:
         return f"[AVISO] Não consegui ler {p}: {e} (continuando sem este contexto)"
 
+# ========================== Helpers adicionais (Location) ==========================
+
+def get_sphera_location_col(df: pd.DataFrame) -> Optional[str]:
+    """Retorna a melhor coluna de localização disponível, sem nunca usar AREA.
+    Prioridade: LOCATION → FPSO → Location → FPSO/Unidade → Unidade. Caso nenhuma exista, retorna None.
+    """
+    if df is None or df.empty:
+        return None
+    candidates = ["LOCATION", "FPSO", "Location", "FPSO/Unidade", "Unidade"]
+    for c in candidates:
+        if c in df.columns and df[c].notna().any():
+            return c
+    return None
+
 # ========================== Carregamento de dados ==========================
 if not SPH_PQ_PATH.exists():
     st.error(f"Parquet do Sphera não encontrado em {SPH_PQ_PATH}")
 
 df_sph = pd.read_parquet(SPH_PQ_PATH) if SPH_PQ_PATH.exists() else pd.DataFrame()
 E_sph  = load_npz_embeddings(SPH_NPZ_PATH)
+# coluna exibida para Location (somente para exibição; filtro foi removido por design)
+LOC_DISPLAY_COL = get_sphera_location_col(df_sph)
 
 # --- WS/Precursores ---
 WS_NPZ,   WS_LBL   = AN_DIR / "ws_embeddings_pt.npz",   AN_DIR / "ws_embeddings_pt.parquet"
@@ -479,7 +495,7 @@ def render_hits_table(hits: List[Tuple[str, float, pd.Series]]):
         return
     rows = []
     for evid, s, row in hits[: min(10, len(hits))]:
-        loc_val = str(row.get("LOCATION", "N/D"))
+        loc_val = (str(row.get(LOC_DISPLAY_COL, row.get('LOCATION', 'N/D'))) if 'LOC_DISPLAY_COL' in globals() and LOC_DISPLAY_COL else str(row.get('LOCATION','N/D')))
         desc    = str(row.get("Description", row.get("DESCRIPTION", ""))).strip()
         rows.append({"Event ID": evid, "Similaridade": round(s, 3), "LOCATION": loc_val, "Description": desc})
     st.markdown("**Eventos do Sphera (Top-10)**")
@@ -567,7 +583,7 @@ if go_btn:
     # Contexto Sphera em texto
     table_ctx_rows = []
     for evid, s, row in hits[: min(10, len(hits))]:
-        loc_val = str(row.get("LOCATION", "N/D"))
+        loc_val = (str(row.get(LOC_DISPLAY_COL, row.get('LOCATION', 'N/D'))) if 'LOC_DISPLAY_COL' in globals() and LOC_DISPLAY_COL else str(row.get('LOCATION','N/D')))
         desc    = str(row.get("Description", row.get("DESCRIPTION", ""))).strip()
         table_ctx_rows.append(f"EventID={evid} | sim={s:.3f} | LOCATION={loc_val} | Description={desc}")
 
