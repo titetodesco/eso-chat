@@ -396,9 +396,7 @@ def build_event_hints(
     coloca '—'.
     """
     if not hits:
-        return "=== EVENT_HINTS ===
-[NENHUM HIT]
-", None
+        return "=== EVENT_HINTS ===[NENHUM HIT]", None
 
     # Embeddings das descrições (D x M)
     descs = [str(r.get("Description", r.get("DESCRIPTION",""))).strip() for _,_,r in hits]
