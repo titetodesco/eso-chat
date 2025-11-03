@@ -402,9 +402,7 @@ def build_event_hints(
     descs = [str(r.get("Description", r.get("DESCRIPTION",""))).strip() for _,_,r in hits]
     descs = [d for d in descs if d]
     if not descs:
-        return "=== EVENT_HINTS ===
-[SEM DESCRIÇÕES VÁLIDAS]
-", None
+        return "=== EVENT_HINTS === [SEM DESCRIÇÕES VÁLIDAS] ", None
     V_desc = encode_texts(descs, batch_size=32).T  # (D x M)
 
     def _labels_col(df):
@@ -440,9 +438,7 @@ def build_event_hints(
         else:
             lines.append(f"[EventID={evid}] —")
 
-    return "
-".join(lines) + "
-", V_desc
+    return " ".join(lines) + "", V_desc
 
 # ========================== Modelo ==========================
 
@@ -568,27 +564,16 @@ def render_hits_table(hits: List[Tuple[str, float, pd.Series]]):
 def push_model(messages: List[Dict[str, str]], pergunta: str, contexto_md: str, dic_matches_md: str):
     # Guardrails para impedir invenção de termos fora dos dicionários
     guardrails = (
-        "REGRAS PARA WS/PRECURSORES/CP:
-"
-        "- Use EXCLUSIVAMENTE os termos listados em DIC_MATCHES para nomear WS/Precursores/CP.
-"
-        "- NÃO crie categorias novas nem traduza/alterar rótulos.
-"
-        "- Se a lista estiver vazia, escreva 'nenhum termo ≥ limiar'.
-"
-        "- Quando citar um termo, mantenha o rótulo exatamente como fornecido.
-"
-        "
-"
-        "REGRAS PARA A COLUNA 'Observações/Precursores relevantes':
-"
-        "- Para cada EventID, escolha no máximo 2 termos dentre os sugeridos em EVENT_HINTS (quando houver).
-"
-        "- Não repita o mesmo termo em mais de 50% dos eventos; prefira diversidade baseada em EVENT_HINTS.
-"
-        "- Se um evento não tiver termos em EVENT_HINTS, use '—' nessa coluna (não invente).
-"
-    )
+        "REGRAS PARA WS/PRECURSORES/CP:"
+        "- Use EXCLUSIVAMENTE os termos listados em DIC_MATCHES para nomear WS/Precursores/CP."
+        "- NÃO crie categorias novas nem traduza/alterar rótulos."
+        "- Se a lista estiver vazia, escreva 'nenhum termo ≥ limiar'."
+        "- Quando citar um termo, mantenha o rótulo exatamente como fornecido."
+        " "
+        "REGRAS PARA A COLUNA 'Observações/Precursores relevantes':"
+        "- Para cada EventID, escolha no máximo 2 termos dentre os sugeridos em EVENT_HINTS (quando houver)."
+        "- Não repita o mesmo termo em mais de 50% dos eventos; prefira diversidade baseada em EVENT_HINTS."
+        "- Se um evento não tiver termos em EVENT_HINTS, use '—' nessa coluna (não invente)."
         "REGRAS PARA WS/PRECURSORES/CP:\n"
         "- Use EXCLUSIVAMENTE os termos listados em DIC_MATCHES.\n"
         "- NÃO crie categorias novas nem traduza/alterar rótulos.\n"
@@ -685,16 +670,10 @@ if go_btn:
 
     messages = [
         {"role": "system", "content": st.session_state.system_prompt},
-        {"role": "user", "content": "
-
-".join([b for b in blocks if b])},
+        {"role": "user", "content": "".join([b for b in blocks if b])},
     ]
     # Anexamos também os EVENT_HINTS ao contexto para o LLM ancorar por linha
-    ctx_full = "
-
-".join([x for x in ctx_chunks if x]) + "
-
-" + EVENT_HINTS_MD
+    ctx_full = " ".join([x for x in ctx_chunks if x]) + "" + EVEN T_HINTS_MD
     push_model(messages, user_text, ctx_full, DIC_MATCHES_MD)
 
 # ========================== Histórico ==========================
