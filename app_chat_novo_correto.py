@@ -396,13 +396,13 @@ def build_event_hints(
     coloca '—'.
     """
     if not hits:
-        return "=== EVENT_HINTS ===[NENHUM HIT]", None
+        return "=== EVENT_HINTS === [NENHUM HIT]", None
 
     # Embeddings das descrições (D x M)
     descs = [str(r.get("Description", r.get("DESCRIPTION",""))).strip() for _,_,r in hits]
     descs = [d for d in descs if d]
     if not descs:
-        return "=== EVENT_HINTS === [SEM DESCRIÇÕES VÁLIDAS] ", None
+        return "=== EVENT_HINTS === [SEM DESCRIÇÕES VÁLIDAS]", None
     V_desc = encode_texts(descs, batch_size=32).T  # (D x M)
 
     def _labels_col(df):
@@ -438,8 +438,143 @@ def build_event_hints(
         else:
             lines.append(f"[EventID={evid}] —")
 
-    return " ".join(lines) + "", V_desc
+    return "".join(lines) + "", V_desc
 
+# ========================== Modelo ==========================
+# (bloco de Modelo movido logo abaixo; inserimos utilitários antes)
+
+# ===== Hints por evento (ancoragem por EventID) =====
+
+def build_event_hints(
+    hits: List[Tuple[str, float, pd.Series]],
+    E_ws, L_ws, E_prec, L_prec, E_cp, L_cp,
+    per_event_thr: float,
+    top_per_family: int = 3,
+) -> Tuple[str, np.ndarray | None]:
+    """
+    Retorna (EVENT_HINTS_MD, V_desc) onde EVENT_HINTS_MD contém, por EventID,
+    até `top_per_family` termos por família (WS/PRE/CP) cuja similaridade com a
+    descrição do evento é >= per_event_thr. Se não houver termos para o evento,
+    coloca '—'.
+    """
+    if not hits:
+        return "=== EVENT_HINTS === [NENHUM HIT]", None
+
+    descs = [str(r.get("Description", r.get("DESCRIPTION",""))).strip() for _,_,r in hits]
+    descs = [d for d in descs if d]
+    if not descs:
+        return "=== EVENT_HINTS === [SEM DESCRIÇÕES VÁLIDAS]", None
+    V_desc = encode_texts(descs, batch_size=32).T  # (D x M)
+
+    def _labels_col(df):
+        return next((c for c in ["label","text","name","CP","cp"] if (df is not None and c in df.columns)), None)
+
+    lines = ["=== EVENT_HINTS ==="]
+    families = [
+        ("WS",  E_ws,   L_ws),
+        ("PRE", E_prec, L_prec),
+        ("CP",  E_cp,   L_cp),
+    ]
+
+    M = V_desc.shape[1]
+    for ev_idx, (evid, _, row) in enumerate(hits[:M]):
+        ev_terms = []
+        for fam_name, E_bank, L_bank in families:
+            if E_bank is None or L_bank is None or len(L_bank) != E_bank.shape[0]:
+                continue
+            S = (E_bank @ V_desc[:, [ev_idx]]).squeeze(axis=1)  # (N_terms,)
+            idx = np.where(S >= per_event_thr)[0]
+            if idx.size == 0:
+                continue
+            order = idx[np.argsort(S[idx])[::-1]][:top_per_family]
+            labcol = _labels_col(L_bank)
+            fam_lines = []
+            for i in order:
+                lab = str(L_bank.iloc[i].get(labcol, f"TERM_{i}"))
+                fam_lines.append(f"{lab} (sim={float(S[i]):.3f})")
+            if fam_lines:
+                ev_terms.append(f"{fam_name}: " + "; ".join(fam_lines))
+        if ev_terms:
+            lines.append(f"[EventID={evid}] " + " | ".join(ev_terms))
+        else:
+            lines.append(f"[EventID={evid}] —")
+
+    return "".join(lines) + "", V_desc
+
+# ===== Atribuição determinística por evento (diversidade e limite global) =====
+
+def assign_terms_per_event(
+    hits: List[Tuple[str, float, pd.Series]],
+    V_desc: Optional[np.ndarray],
+    E_ws, L_ws, E_prec, L_prec, E_cp, L_cp,
+    per_event_thr: float,
+    max_per_event: int = 2,
+    max_global_frac: float = 0.5,) -> str:
+    """
+    Retorna '=== EVENT_ASSIGNMENTS ===' com até `max_per_event` termos por evento,
+    escolhidos de modo a limitar repetições globais (≤ `max_global_frac` dos eventos)
+    e privilegiar diversidade entre famílias.
+    """
+    if not hits or V_desc is None:
+        return "=== EVENT_ASSIGNMENTS === [NENHUM HIT]"
+
+    families = [
+        ("WS",  E_ws,   L_ws),
+        ("PRE", E_prec, L_prec),
+        ("CP",  E_cp,   L_cp),
+    ]
+
+    def _labels_col(df):
+        return next((c for c in ["label","text","name","CP","cp"] if (df is not None and c in df.columns)), None)
+
+    M = V_desc.shape[1]
+    candidates = []  # por evento: [(label, sim, fam), ...]
+    label_pool = set()
+    for ev_idx in range(min(M, len(hits))):
+        ev_cands = []
+        for fam_name, E_bank, L_bank in families:
+            if E_bank is None or L_bank is None or len(L_bank) != E_bank.shape[0]:
+                continue
+            S = (E_bank @ V_desc[:, [ev_idx]]).squeeze(axis=1)
+            idx = np.where(S >= per_event_thr)[0]
+            if idx.size == 0:
+                continue
+            order = idx[np.argsort(S[idx])[::-1]]
+            labcol = _labels_col(L_bank)
+            for i in order[:10]:
+                lab = str(L_bank.iloc[i].get(labcol, f"TERM_{i}"))
+                ev_cands.append((lab, float(S[i]), fam_name))
+                label_pool.add(lab)
+        ev_cands.sort(key=lambda t: t[1], reverse=True)
+        candidates.append(ev_cands)
+
+    n_events = len(candidates)
+    max_global = max(1, int(np.ceil(max_global_frac * n_events)))
+    used_count: Dict[str, int] = {lab: 0 for lab in label_pool}
+
+    lines = ["=== EVENT_ASSIGNMENTS ==="]
+    for ev_idx, (evid, _, _row) in enumerate(hits[:n_events]):
+        picked = []
+        seen_fams = set()
+        for lab, sim, fam in candidates[ev_idx]:
+            if used_count.get(lab, 0) >= max_global:
+                continue
+            if fam in seen_fams and len(seen_fams) < 3:
+                continue
+            picked.append((lab, sim, fam))
+            used_count[lab] = used_count.get(lab, 0) + 1
+            seen_fams.add(fam)
+            if len(picked) >= max_per_event:
+                break
+        if picked:
+            parts = [f"{lab}" for (lab, _sim, _fam) in picked]
+            lines.append(f"[EventID={evid}] " + "; ".join(parts))
+        else:
+            lines.append(f"[EventID={evid}] —")
+
+    return "".join(lines) + ""
+
+# (continua o bloco do modelo abaixo)
 # ========================== Modelo ==========================
 
 def ollama_chat(messages, model=None, temperature=0.2, stream=False, timeout=120):
@@ -479,7 +614,7 @@ if st.sidebar.button("Carregar no rascunho", use_container_width=True):
 st.sidebar.header("Recuperação – Sphera")
 k_sph   = st.sidebar.slider("Top-K Sphera", 1, 100, 20, 1)
 thr_sph = st.sidebar.slider("Limiar Sphera (cos)", 0.0, 1.0, 0.30, 0.01)
-years   = st.sidebar.slider("Últimos N anos", 1, 10, 3, 1)
+years   = st.sidebar.slider("Últimos N anos", 1, 10, 5, 1)
 
 st.sidebar.subheader("Filtros avançados – Sphera")
 substr = st.sidebar.text_input("Description contém (substring)", "")
@@ -569,7 +704,7 @@ def push_model(messages: List[Dict[str, str]], pergunta: str, contexto_md: str, 
         "- NÃO crie categorias novas nem traduza/alterar rótulos."
         "- Se a lista estiver vazia, escreva 'nenhum termo ≥ limiar'."
         "- Quando citar um termo, mantenha o rótulo exatamente como fornecido."
-        " "
+        ""
         "REGRAS PARA A COLUNA 'Observações/Precursores relevantes':"
         "- Para cada EventID, escolha no máximo 2 termos dentre os sugeridos em EVENT_HINTS (quando houver)."
         "- Não repita o mesmo termo em mais de 50% dos eventos; prefira diversidade baseada em EVENT_HINTS."
@@ -669,12 +804,12 @@ if go_btn:
     ]
 
     messages = [
-       {"role": "system", "content": st.session_state.system_prompt},
-       {"role": "user",   "content": "\n\n".join(filter(None, blocks))},
+        {"role": "system", "content": st.session_state.system_prompt},
+        {"role": "user", "content": "".join([b for b in blocks if b])},
     ]
-    ctx_full = "\n\n".join(filter(None, ctx_chunks)) + "\n\n" + EVENT_HINTS_MD
+    # Anexamos também os EVENT_HINTS ao contexto para o LLM ancorar por linha
+    ctx_full = "".join([x for x in ctx_chunks if x]) + "" + EVENT_HINTS_MD
     push_model(messages, user_text, ctx_full, DIC_MATCHES_MD)
-   
 
 # ========================== Histórico ==========================
 if st.session_state.get("_just_replied"):
