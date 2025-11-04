@@ -509,7 +509,8 @@ def assign_terms_per_event(
     E_ws, L_ws, E_prec, L_prec, E_cp, L_cp,
     per_event_thr: float,
     max_per_event: int = 2,
-    max_global_frac: float = 0.5,) -> str:
+    max_global_frac: float = 0.5,
+) -> str:
     """
     Retorna '=== EVENT_ASSIGNMENTS ===' com até `max_per_event` termos por evento,
     escolhidos de modo a limitar repetições globais (≤ `max_global_frac` dos eventos)
@@ -614,7 +615,7 @@ if st.sidebar.button("Carregar no rascunho", use_container_width=True):
 st.sidebar.header("Recuperação – Sphera")
 k_sph   = st.sidebar.slider("Top-K Sphera", 1, 100, 20, 1)
 thr_sph = st.sidebar.slider("Limiar Sphera (cos)", 0.0, 1.0, 0.30, 0.01)
-years   = st.sidebar.slider("Últimos N anos", 1, 10, 5, 1)
+years   = st.sidebar.slider("Últimos N anos", 1, 10, 3, 1)
 
 st.sidebar.subheader("Filtros avançados – Sphera")
 substr = st.sidebar.text_input("Description contém (substring)", "")
@@ -684,15 +685,15 @@ if clear_chat:
 
 # ========================== Execução ==========================
 
-def render_hits_table(hits: List[Tuple[str, float, pd.Series]]):
+def render_hits_table(hits: List[Tuple[str, float, pd.Series]], topk_display: int):
     if not hits:
         return
     rows = []
-    for evid, s, row in hits[: min(10, len(hits))]:
+    for evid, s, row in hits[: min(topk_display, len(hits))]:
         loc_val = (str(row.get(LOC_DISPLAY_COL, row.get('LOCATION', 'N/D'))) if 'LOC_DISPLAY_COL' in globals() and LOC_DISPLAY_COL else str(row.get('LOCATION','N/D')))
         desc    = str(row.get("Description", row.get("DESCRIPTION", ""))).strip()
         rows.append({"Event ID": evid, "Similaridade": round(s, 3), "LOCATION": loc_val, "Description": desc})
-    st.markdown("**Eventos do Sphera (Top-10)**")
+    st.markdown(f"**Eventos do Sphera (Top-{min(topk_display, len(hits))})**")
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 
@@ -750,7 +751,7 @@ if go_btn:
     )
 
     if hits:
-        render_hits_table(hits)
+        render_hits_table(hits, k_sph)
     else:
         st.info("Nenhum evento do Sphera atingiu o limiar/filtros atuais.")
 
@@ -793,7 +794,7 @@ if go_btn:
 
     # Contexto Sphera em texto
     table_ctx_rows = []
-    for evid, s, row in hits[: min(10, len(hits))]:
+    for evid, s, row in hits[: min(k_sph, len(hits))]:
         loc_val = (str(row.get(LOC_DISPLAY_COL, row.get('LOCATION', 'N/D'))) if 'LOC_DISPLAY_COL' in globals() and LOC_DISPLAY_COL else str(row.get('LOCATION','N/D')))
         desc    = str(row.get("Description", row.get("DESCRIPTION", ""))).strip()
         table_ctx_rows.append(f"EventID={evid} | sim={s:.3f} | LOCATION={loc_val} | Description={desc}")
