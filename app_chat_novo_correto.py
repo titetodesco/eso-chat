@@ -1,19 +1,9 @@
-# -*- coding: utf-8 -*- v 05/11/2025 18 hs
+# -*- coding: utf-8 -*- v 05/11/2025 - 18 hs
 """
-app_chat_novo_correto.py — patches WS/Prec/CP + guardrails
-
-Alterações incluídas (sem remover funcionalidades):
-1) Loader robusto de CP (npz/parquet/jsonl) com fallbacks e normalização.
-2) Ajuste do default do "Limiar por evento (dicionários)" para 0.15.
-3) Expander de depuração com Top-N "brutos" (ignora thresholds) para WS/Precursores/CP.
-4) Injeção explícita das listas calculadas (WS/Precursores/CP) no contexto do LLM e
-   guardrails que proíbem o modelo de inventar termos fora dos dicionários.
-
-Todo o restante permanece igual: prompts, uploads, filtros de Description, execução
-somente ao clicar, limpar chat/rascunho/uploads, histórico, etc.
-
-[Patch atual nesta versão]
-- Upload agora aceita: txt, md, csv, pdf, docx, xlsx (com extração de texto para cada tipo).
+app_chat_novo_correto.py — Sphera + RAG + DIC (WS/Precursores/CP)
+- Mantém todas as funcionalidades anteriores
+- Upload: txt, md, csv, pdf, docx, xlsx
+- OCR opcional para PDF com imagens (sidebar)
 """
 
 import os
@@ -120,16 +110,12 @@ def load_file_text(p: Path) -> str:
     except Exception as e:
         return f"[AVISO] Não consegui ler {p}: {e} (continuando sem este contexto)"
 
-# ========================== Helpers adicionais (Location) ==========================
-
+# ========== Location helpers ==========
 def get_sphera_location_col(df: pd.DataFrame) -> Optional[str]:
-    """Retorna a melhor coluna de localização disponível, sem nunca usar AREA.
-    Prioridade: LOCATION → FPSO → Location → FPSO/Unidade → Unidade. Caso nenhuma exista, retorna None.
-    """
+    """Prioridade: LOCATION → FPSO → Location → FPSO/Unidade → Unidade (nunca AREA)."""
     if df is None or df.empty:
         return None
-    candidates = ["LOCATION", "FPSO", "Location", "FPSO/Unidade", "Unidade"]
-    for c in candidates:
+    for c in ["LOCATION", "FPSO", "Location", "FPSO/Unidade", "Unidade"]:
         if c in df.columns and df[c].notna().any():
             return c
     return None
@@ -140,10 +126,9 @@ if not SPH_PQ_PATH.exists():
 
 df_sph = pd.read_parquet(SPH_PQ_PATH) if SPH_PQ_PATH.exists() else pd.DataFrame()
 E_sph  = load_npz_embeddings(SPH_NPZ_PATH)
-# coluna exibida para Location (somente para exibição; filtro foi removido por design)
 LOC_DISPLAY_COL = get_sphera_location_col(df_sph)
 
-# --- WS/Precursores ---
+# --- Dicionários WS/Precursores ---
 WS_NPZ,   WS_LBL   = AN_DIR / "ws_embeddings_pt.npz",   AN_DIR / "ws_embeddings_pt.parquet"
 PREC_NPZ, PREC_LBL = AN_DIR / "prec_embeddings_pt.npz", AN_DIR / "prec_embeddings_pt.parquet"
 E_ws   = load_npz_embeddings(WS_NPZ) if WS_NPZ.exists() else None
@@ -153,9 +138,9 @@ L_prec = (pd.read_parquet(PREC_LBL) if PREC_LBL.exists() else None)
 
 # --- CP (loader robusto com fallbacks) ---
 CP_NPZ_MAIN   = AN_DIR / "cp_embeddings.npz"
-CP_NPZ_ALT    = AN_DIR / "cp_vectors.npz"        # fallback
+CP_NPZ_ALT    = AN_DIR / "cp_vectors.npz"
 CP_LBL_PARQ   = AN_DIR / "cp_labels.parquet"
-CP_LBL_JSONL  = AN_DIR / "cp_labels.jsonl"       # fallback
+CP_LBL_JSONL  = AN_DIR / "cp_labels.jsonl"
 
 @st.cache_data(show_spinner=False)
 def _load_npz_any(path: Path):
@@ -208,12 +193,11 @@ def _load_cp_labels() -> Optional[pd.DataFrame]:
 
 E_cp = _load_npz_any(CP_NPZ_MAIN) or _load_npz_any(CP_NPZ_ALT)
 L_cp = _load_cp_labels()
-
 if E_cp is None or L_cp is None:
     st.warning("[Dicionários/CP] Não foi possível carregar completamente os dados de CP. Continuando sem CP.")
 else:
     if L_cp.shape[0] != E_cp.shape[0]:
-        st.warning(f"[Dicionários/CP] Desalinhamento: labels={L_cp.shape[0]} vs embeddings={E_cp.shape[0]}. Ignorando CP para evitar inconsistências.")
+        st.warning(f"[Dicionários/CP] Desalinhamento: labels={L_cp.shape[0]} vs embeddings={E_cp.shape[0]}. Ignorando CP.")
         E_cp, L_cp = None, None
 
 # ========================== Estado ==========================
@@ -348,12 +332,11 @@ def aggregate_dict_matches_over_hits(
     }
 
 # ===== Depuração: Top-N "brutos" (ignora thresholds) =====
-
 def _topk_raw_for_bank(E_bank: np.ndarray, labels_df: pd.DataFrame, V_desc_T: np.ndarray, topk: int = 10):
     if E_bank is None or labels_df is None or (len(labels_df) != (E_bank.shape[0] if hasattr(E_bank,'shape') else 0)) or V_desc_T is None:
         return pd.DataFrame()
-    S = (E_bank @ V_desc_T)      # (N_terms, M)
-    sims = S.max(axis=1)         # max por termo
+    S = (E_bank @ V_desc_T)
+    sims = S.max(axis=1)
     order = np.argsort(sims)[::-1][:topk]
     labels_col = next((c for c in ["label","text","name","CP","cp"] if c in labels_df.columns), None)
     rows = []
@@ -372,7 +355,6 @@ def debug_preview_dicts(hits, E_ws, L_ws, E_prec, L_prec, E_cp, L_cp, topk=10):
         st.info("Sem descrições válidas para depuração.")
         return
     V_desc = encode_texts(descs, batch_size=32).T  # (D x M)
-
     with st.expander("🔎 Depuração — Top-N brutos (ignora thresholds)", expanded=False):
         if E_ws is not None and L_ws is not None:
             st.markdown("**WS (max entre eventos, sem limiares)**")
@@ -384,47 +366,31 @@ def debug_preview_dicts(hits, E_ws, L_ws, E_prec, L_prec, E_cp, L_cp, topk=10):
             st.markdown("**CP (max entre eventos, sem limiares)**")
             st.dataframe(_topk_raw_for_bank(E_cp, L_cp, V_desc, topk), use_container_width=True, hide_index=True)
 
-# ===== Hints por evento (ancoragem por EventID) =====
-
+# ===== Hints por evento =====
 def build_event_hints(
     hits: List[Tuple[str, float, pd.Series]],
     E_ws, L_ws, E_prec, L_prec, E_cp, L_cp,
     per_event_thr: float,
     top_per_family: int = 3,
 ) -> Tuple[str, np.ndarray | None]:
-    """
-    Retorna (EVENT_HINTS_MD, V_desc) onde EVENT_HINTS_MD contém, por EventID,
-    até `top_per_family` termos por família (WS/PRE/CP) cuja similaridade com a
-    descrição do evento é >= per_event_thr. Se não houver termos para o evento,
-    coloca '—'.
-    """
     if not hits:
-        return "=== EVENT_HINTS === [NENHUM HIT]", None
-
-    # Embeddings das descrições (D x M)
+        return "=== EVENT_HINTS ===\n[NENHUM HIT]\n", None
     descs = [str(r.get("Description", r.get("DESCRIPTION",""))).strip() for _,_,r in hits]
     descs = [d for d in descs if d]
     if not descs:
-        return "=== EVENT_HINTS === [SEM DESCRIÇÕES VÁLIDAS]", None
+        return "=== EVENT_HINTS ===\n[SEM DESCRIÇÕES VÁLIDAS]\n", None
     V_desc = encode_texts(descs, batch_size=32).T  # (D x M)
-
     def _labels_col(df):
         return next((c for c in ["label","text","name","CP","cp"] if (df is not None and c in df.columns)), None)
-
     lines = ["=== EVENT_HINTS ==="]
-    families = [
-        ("WS",  E_ws,   L_ws),
-        ("PRE", E_prec, L_prec),
-        ("CP",  E_cp,   L_cp),
-    ]
-
+    families = [("WS",E_ws,L_ws), ("PRE",E_prec,L_prec), ("CP",E_cp,L_cp)]
     M = V_desc.shape[1]
     for ev_idx, (evid, _, row) in enumerate(hits[:M]):
         ev_terms = []
         for fam_name, E_bank, L_bank in families:
             if E_bank is None or L_bank is None or len(L_bank) != E_bank.shape[0]:
                 continue
-            S = (E_bank @ V_desc[:, [ev_idx]]).squeeze(axis=1)  # (N_terms,)
+            S = (E_bank @ V_desc[:, [ev_idx]]).squeeze(axis=1)
             idx = np.where(S >= per_event_thr)[0]
             if idx.size == 0:
                 continue
@@ -436,76 +402,10 @@ def build_event_hints(
                 fam_lines.append(f"{lab} (sim={float(S[i]):.3f})")
             if fam_lines:
                 ev_terms.append(f"{fam_name}: " + "; ".join(fam_lines))
-        if ev_terms:
-            lines.append(f"[EventID={evid}] " + " | ".join(ev_terms))
-        else:
-            lines.append(f"[EventID={evid}] —")
+        lines.append(f"[EventID={evid}] " + (" | ".join(ev_terms) if ev_terms else "—"))
+    return "\n".join(lines) + "\n", V_desc
 
-    return "".join(lines) + "", V_desc
-
-# ========================== Modelo ==========================
-# (bloco de Modelo movido logo abaixo; inserimos utilitários antes)
-
-# ===== Hints por evento (ancoragem por EventID) =====
-
-def build_event_hints(
-    hits: List[Tuple[str, float, pd.Series]],
-    E_ws, L_ws, E_prec, L_prec, E_cp, L_cp,
-    per_event_thr: float,
-    top_per_family: int = 3,
-) -> Tuple[str, np.ndarray | None]:
-    """
-    Retorna (EVENT_HINTS_MD, V_desc) onde EVENT_HINTS_MD contém, por EventID,
-    até `top_per_family` termos por família (WS/PRE/CP) cuja similaridade com a
-    descrição do evento é >= per_event_thr. Se não houver termos para o evento,
-    coloca '—'.
-    """
-    if not hits:
-        return "=== EVENT_HINTS === [NENHUM HIT]", None
-
-    descs = [str(r.get("Description", r.get("DESCRIPTION",""))).strip() for _,_,r in hits]
-    descs = [d for d in descs if d]
-    if not descs:
-        return "=== EVENT_HINTS === [SEM DESCRIÇÕES VÁLIDAS]", None
-    V_desc = encode_texts(descs, batch_size=32).T  # (D x M)
-
-    def _labels_col(df):
-        return next((c for c in ["label","text","name","CP","cp"] if (df is not None and c in df.columns)), None)
-
-    lines = ["=== EVENT_HINTS ==="]
-    families = [
-        ("WS",  E_ws,   L_ws),
-        ("PRE", E_prec, L_prec),
-        ("CP",  E_cp,   L_cp),
-    ]
-
-    M = V_desc.shape[1]
-    for ev_idx, (evid, _, row) in enumerate(hits[:M]):
-        ev_terms = []
-        for fam_name, E_bank, L_bank in families:
-            if E_bank is None or L_bank is None or len(L_bank) != E_bank.shape[0]:
-                continue
-            S = (E_bank @ V_desc[:, [ev_idx]]).squeeze(axis=1)  # (N_terms,)
-            idx = np.where(S >= per_event_thr)[0]
-            if idx.size == 0:
-                continue
-            order = idx[np.argsort(S[idx])[::-1]][:top_per_family]
-            labcol = _labels_col(L_bank)
-            fam_lines = []
-            for i in order:
-                lab = str(L_bank.iloc[i].get(labcol, f"TERM_{i}"))
-                fam_lines.append(f"{lab} (sim={float(S[i]):.3f})")
-            if fam_lines:
-                ev_terms.append(f"{fam_name}: " + "; ".join(fam_lines))
-        if ev_terms:
-            lines.append(f"[EventID={evid}] " + " | ".join(ev_terms))
-        else:
-            lines.append(f"[EventID={evid}] —")
-
-    return "".join(lines) + "", V_desc
-
-# ===== Atribuição determinística por evento (diversidade e limite global) =====
-
+# ===== Atribuição determinística por evento =====
 def assign_terms_per_event(
     hits: List[Tuple[str, float, pd.Series]],
     V_desc: Optional[np.ndarray],
@@ -514,26 +414,13 @@ def assign_terms_per_event(
     max_per_event: int = 2,
     max_global_frac: float = 0.5,
 ) -> str:
-    """
-    Retorna '=== EVENT_ASSIGNMENTS ===' com até `max_per_event` termos por evento,
-    escolhidos de modo a limitar repetições globais (≤ `max_global_frac` dos eventos)
-    e privilegiar diversidade entre famílias.
-    """
     if not hits or V_desc is None:
-        return "=== EVENT_ASSIGNMENTS === [NENHUM HIT]"
-
-    families = [
-        ("WS",  E_ws,   L_ws),
-        ("PRE", E_prec, L_prec),
-        ("CP",  E_cp,   L_cp),
-    ]
-
+        return "=== EVENT_ASSIGNMENTS ===\n[NENHUM HIT]\n"
+    families = [("WS",E_ws,L_ws), ("PRE",E_prec,L_prec), ("CP",E_cp,L_cp)]
     def _labels_col(df):
         return next((c for c in ["label","text","name","CP","cp"] if (df is not None and c in df.columns)), None)
-
     M = V_desc.shape[1]
-    candidates = []  # por evento: [(label, sim, fam), ...]
-    label_pool = set()
+    candidates, label_pool = [], set()
     for ev_idx in range(min(M, len(hits))):
         ev_cands = []
         for fam_name, E_bank, L_bank in families:
@@ -551,15 +438,12 @@ def assign_terms_per_event(
                 label_pool.add(lab)
         ev_cands.sort(key=lambda t: t[1], reverse=True)
         candidates.append(ev_cands)
-
     n_events = len(candidates)
     max_global = max(1, int(np.ceil(max_global_frac * n_events)))
     used_count: Dict[str, int] = {lab: 0 for lab in label_pool}
-
     lines = ["=== EVENT_ASSIGNMENTS ==="]
     for ev_idx, (evid, _, _row) in enumerate(hits[:n_events]):
-        picked = []
-        seen_fams = set()
+        picked, seen_fams = [], set()
         for lab, sim, fam in candidates[ev_idx]:
             if used_count.get(lab, 0) >= max_global:
                 continue
@@ -570,17 +454,10 @@ def assign_terms_per_event(
             seen_fams.add(fam)
             if len(picked) >= max_per_event:
                 break
-        if picked:
-            parts = [f"{lab}" for (lab, _sim, _fam) in picked]
-            lines.append(f"[EventID={evid}] " + "; ".join(parts))
-        else:
-            lines.append(f"[EventID={evid}] —")
+        lines.append(f"[EventID={evid}] " + ("; ".join([p[0] for p in picked]) if picked else "—"))
+    return "\n".join(lines) + "\n"
 
-    return "".join(lines) + ""
-
-# (continua o bloco do modelo abaixo)
 # ========================== Modelo ==========================
-
 def ollama_chat(messages, model=None, temperature=0.2, stream=False, timeout=120):
     if not (OLLAMA_HOST and (model or OLLAMA_MODEL)):
         raise RuntimeError("Modelo não configurado. Defina OLLAMA_HOST e OLLAMA_MODEL.")
@@ -594,12 +471,11 @@ def ollama_chat(messages, model=None, temperature=0.2, stream=False, timeout=120
 # ========================== Sidebar ==========================
 st.sidebar.subheader("Assistente de Prompts")
 prompts_bank = load_prompts_md(PROMPTS_MD_PATH)
-
-col_p1, col_p2 = st.sidebar.columns(2)
-with col_p1:
+c1, c2 = st.sidebar.columns(2)
+with c1:
     titles_texto = [it["title"] for it in prompts_bank.get("Texto", [])]
     sel_texto = st.selectbox("Texto", options=["(vazio)"] + titles_texto, index=0)
-with col_p2:
+with c2:
     titles_upload = [it["title"] for it in prompts_bank.get("Upload", [])]
     sel_upload = st.selectbox("Upload", options=["(vazio)"] + titles_upload, index=0)
 
@@ -620,12 +496,19 @@ k_sph   = st.sidebar.slider("Top-K Sphera", 1, 100, 20, 1)
 thr_sph = st.sidebar.slider("Limiar Sphera (cos)", 0.0, 1.0, 0.30, 0.01)
 years   = st.sidebar.slider("Últimos N anos", 1, 10, 3, 1)
 
+st.sidebar.subheader("Uploads (PDF)")
+use_pdf_ocr = st.sidebar.checkbox(
+    "Tentar OCR quando PDF tiver imagens",
+    value=False,
+    help="Use esta opção se seu PDF for escaneado ou contiver texto nas imagens."
+)
+
 st.sidebar.subheader("Filtros avançados – Sphera")
 substr = st.sidebar.text_input("Description contém (substring)", "")
 
 st.sidebar.subheader("Agregação sobre eventos recuperados (Sphera)")
 agg_mode    = st.sidebar.selectbox("Agregação", ["max", "mean"], index=0)
-per_ev_thr  = st.sidebar.slider("Limiar por evento (dicionários)", 0.0, 1.0, 0.15, 0.01)  # default ajustado
+per_ev_thr  = st.sidebar.slider("Limiar por evento (dicionários)", 0.0, 1.0, 0.15, 0.01)
 min_support = st.sidebar.slider("Suporte mínimo (nº de eventos)", 1, 20, 1, 1)
 
 thr_ws_sim   = st.sidebar.slider("Limiar de similaridade WS",        0.0, 1.0, 0.25, 0.01)
@@ -657,25 +540,20 @@ st.title("SAFETY • CHAT (Somente Sphera)")
 st.text_area("Conteúdo do prompt", key="draft_prompt", height=180, placeholder="Digite ou carregue um modelo de prompt…")
 user_text = st.text_area("Texto de análise (para Sphera)", height=200, placeholder="Cole aqui a descrição/evento a analisar…")
 
-# ---------- PATCH: aceitar pdf/docx/xlsx além de txt/md/csv ----------
+# ---------- Upload (txt, md, csv, pdf, docx, xlsx) + OCR opcional ----------
 uploaded = st.file_uploader(
     "Anexar arquivo (opcional)",
     type=["txt", "md", "csv", "pdf", "docx", "xlsx"]
 )  # upload não dispara
 
 def extract_pdf_text(file_like: io.BytesIO) -> str:
-    """
-    Extrai texto de PDF. Tenta PyPDF2 -> PyMuPDF (fitz) -> pdfminer.six.
-    Retorna string (pode ser vazia se o PDF for apenas imagem/scaneado).
-    """
+    """Extrai texto de PDF. Tenta PyPDF2 -> PyMuPDF -> pdfminer.six."""
     # 1) PyPDF2
     try:
         import PyPDF2
         file_like.seek(0)
         reader = PyPDF2.PdfReader(file_like)
-        parts = []
-        for page in reader.pages:
-            parts.append(page.extract_text() or "")
+        parts = [(page.extract_text() or "") for page in reader.pages]
         return "\n".join(parts).strip()
     except Exception:
         pass
@@ -693,6 +571,44 @@ def extract_pdf_text(file_like: io.BytesIO) -> str:
         from pdfminer.high_level import extract_text
         file_like.seek(0)
         return (extract_text(file_like) or "").strip()
+    except Exception:
+        pass
+    return ""
+
+def ocr_pdf_images(file_like: io.BytesIO, max_pages: int = 30) -> str:
+    """
+    OCR de páginas do PDF. Tenta: PyMuPDF (render) + pytesseract → pdf2image + pytesseract.
+    Retorna string (silencioso se libs não estiverem instaladas).
+    """
+    text_parts = []
+    # 1) PyMuPDF
+    try:
+        import fitz
+        from PIL import Image
+        import pytesseract
+        file_like.seek(0)
+        doc = fitz.open(stream=file_like.read(), filetype="pdf")
+        for i, page in enumerate(doc):
+            if i >= max_pages:
+                break
+            pix = page.get_pixmap(dpi=200)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            text_parts.append(pytesseract.image_to_string(img))
+        ocr_txt = "\n".join(text_parts).strip()
+        if ocr_txt:
+            return ocr_txt
+    except Exception:
+        pass
+    # 2) pdf2image
+    try:
+        from pdf2image import convert_from_bytes
+        from PIL import Image
+        import pytesseract
+        file_like.seek(0)
+        images = convert_from_bytes(file_like.read(), dpi=200, first_page=1, last_page=max_pages)
+        for img in images:
+            text_parts.append(pytesseract.image_to_string(img))
+        return "\n".join(text_parts).strip()
     except Exception:
         pass
     return ""
@@ -734,10 +650,18 @@ if uploaded is not None:
 
     if name.endswith(".pdf"):
         as_text = extract_pdf_text(io.BytesIO(raw))
+        # Se marcado OCR e pouco texto nativo, tenta OCR (até 30 páginas)
+        if use_pdf_ocr and (not as_text or len(as_text) < 200):
+            ocr_txt = ocr_pdf_images(io.BytesIO(raw), max_pages=30)
+            if ocr_txt:
+                as_text = (as_text + "\n\n[OCR]\n" + ocr_txt).strip() if as_text else ocr_txt
+
     elif name.endswith(".docx"):
         as_text = extract_docx_text(io.BytesIO(raw))
+
     elif name.endswith(".xlsx"):
         as_text = extract_xlsx_text(io.BytesIO(raw))
+
     else:
         # textos puros e CSV
         try:
@@ -761,9 +685,9 @@ if uploaded is not None:
     else:
         st.warning(
             f"Não foi possível extrair texto de {uploaded.name}. "
-            "Se for PDF escaneado (imagem), poderá exigir OCR externo."
+            "Se for PDF escaneado (imagem), tente habilitar o OCR."
         )
-# ---------- /PATCH upload ----------
+# ---------- /Upload ----------
 
 col_run1, col_run2, col_run3 = st.columns([1, 1, 1])
 go_btn      = col_run1.button("Enviar para o chat", type="primary", use_container_width=True)
@@ -778,7 +702,6 @@ if clear_chat:
     st.rerun()
 
 # ========================== Execução ==========================
-
 def render_hits_table(hits: List[Tuple[str, float, pd.Series]], topk_display: int):
     if not hits:
         return
@@ -786,35 +709,29 @@ def render_hits_table(hits: List[Tuple[str, float, pd.Series]], topk_display: in
     for evid, s, row in hits[: min(topk_display, len(hits))]:
         loc_val = (str(row.get(LOC_DISPLAY_COL, row.get('LOCATION', 'N/D'))) if 'LOC_DISPLAY_COL' in globals() and LOC_DISPLAY_COL else str(row.get('LOCATION','N/D')))
         desc    = str(row.get("Description", row.get("DESCRIPTION", ""))).strip()
+        # normalização leve de quebras vindas do Excel/Parquet
+        desc = desc.replace("\r", " ").replace("\n", " ").replace("_x000D_", " ")
+        desc = re.sub(r"\s+", " ", desc).strip()
         rows.append({"Event ID": evid, "Similaridade": round(s, 3), "LOCATION": loc_val, "Description": desc})
     st.markdown(f"**Eventos do Sphera (Top-{min(topk_display, len(hits))})**")
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-
 def push_model(messages: List[Dict[str, str]], pergunta: str, contexto_md: str, dic_matches_md: str):
-    # Guardrails para impedir invenção de termos fora dos dicionários
     guardrails = (
-        "REGRAS PARA WS/PRECURSORES/CP:"
-        "- Use EXCLUSIVAMENTE os termos listados em DIC_MATCHES para nomear WS/Precursores/CP."
-        "- NÃO crie categorias novas nem traduza/alterar rótulos."
-        "- Se a lista estiver vazia, escreva 'nenhum termo ≥ limiar'."
-        "- Quando citar um termo, mantenha o rótulo exatamente como fornecido."
-        ""
-        "REGRAS PARA A COLUNA 'Observações/Precursores relevantes':"
-        "- Para cada EventID, escolha no máximo 2 termos dentre os sugeridos em EVENT_HINTS (quando houver)."
-        "- Não repita o mesmo termo em mais de 50% dos eventos; prefira diversidade baseada em EVENT_HINTS."
-        "- Se um evento não tiver termos em EVENT_HINTS, use '—' nessa coluna (não invente)."
         "REGRAS PARA WS/PRECURSORES/CP:\n"
-        "- Use EXCLUSIVAMENTE os termos listados em DIC_MATCHES.\n"
+        "- Use EXCLUSIVAMENTE os termos listados em DIC_MATCHES para nomear WS/Precursores/CP.\n"
         "- NÃO crie categorias novas nem traduza/alterar rótulos.\n"
         "- Se a lista estiver vazia, escreva 'nenhum termo ≥ limiar'.\n"
         "- Quando citar um termo, mantenha o rótulo exatamente como fornecido.\n"
+        "\n"
+        "REGRAS PARA A COLUNA 'Observações/Precursores relevantes':\n"
+        "- Para cada EventID, escolha no máximo 2 termos dentre os sugeridos em EVENT_HINTS (quando houver).\n"
+        "- Não repita o mesmo termo em mais de 50% dos eventos; prefira diversidade baseada em EVENT_HINTS.\n"
+        "- Se um evento não tiver termos em EVENT_HINTS, use '—' nessa coluna (não invente).\n"
     )
-
     messages.append({"role": "user", "content": "DADOS DE APOIO (não responda aqui):\n" + contexto_md + "\n\n" + dic_matches_md})
     q = pergunta or st.session_state.draft_prompt or "Faça a síntese conforme regras."
     messages.append({"role": "user", "content": guardrails + "\nPergunta/objetivo:\n" + q})
-
     try:
         resp = ollama_chat(messages, model=OLLAMA_MODEL, temperature=0.2, stream=False)
         content = ""
@@ -856,17 +773,20 @@ if go_btn:
         agg_mode=agg_mode, per_event_thr=per_ev_thr, min_support=min_support,
     )
 
-    # Depuração (opcional): mostra Top-N brutos para confirmar que o espaço vetorial está ok
+    # Depuração opcional
     debug_preview_dicts(hits, E_ws, L_ws, E_prec, L_prec, E_cp, L_cp, topk=10)
 
-    # Hints por evento (para ancorar as observações do modelo)
+    # Hints + assignments por evento (para ancorar observações do LLM)
     EVENT_HINTS_MD, _Vdesc = build_event_hints(
         hits, E_ws, L_ws, E_prec, L_prec, E_cp, L_cp,
-        per_event_thr=per_ev_thr,
-        top_per_family=3,
+        per_event_thr=per_ev_thr, top_per_family=3,
+    )
+    EVENT_ASSIGNMENTS_MD = assign_terms_per_event(
+        hits, _Vdesc, E_ws, L_ws, E_prec, L_prec, E_cp, L_cp,
+        per_event_thr=per_ev_thr, max_per_event=2, max_global_frac=0.5,
     )
 
-    # Bloco estruturado com os termos encontrados para passar ao LLM
+    # Bloco estruturado dos termos calculados (pro LLM não inventar)
     def _fmt_list(name, arr):
         if not arr:
             return f"{name}: NENHUM_TERMO_ACIMA_DO_LIMIAR\n"
@@ -878,7 +798,6 @@ if go_btn:
     ws_list   = dict_matches.get("ws")   or []
     prec_list = dict_matches.get("prec") or []
     cp_list   = dict_matches.get("cp")   or []
-
     DIC_MATCHES_MD = (
         "=== DIC_MATCHES ===\n"
         + _fmt_list("WS", ws_list)
@@ -886,24 +805,27 @@ if go_btn:
         + _fmt_list("CP", cp_list)
     )
 
-    # Contexto Sphera em texto
+    # Contexto Sphera textual (Top-K)
     table_ctx_rows = []
     for evid, s, row in hits[: min(k_sph, len(hits))]:
         loc_val = (str(row.get(LOC_DISPLAY_COL, row.get('LOCATION', 'N/D'))) if 'LOC_DISPLAY_COL' in globals() and LOC_DISPLAY_COL else str(row.get('LOCATION','N/D')))
         desc    = str(row.get("Description", row.get("DESCRIPTION", ""))).strip()
+        desc = desc.replace("\r", " ").replace("\n", " ").replace("_x000D_", " ")
+        desc = re.sub(r"\s+", " ", desc).strip()
         table_ctx_rows.append(f"EventID={evid} | sim={s:.3f} | LOCATION={loc_val} | Description={desc}")
 
     ctx_chunks = [
         f"Sphera_hits={len(hits)}, thr_sph={thr_sph:.2f}, years={years}",
         "\n".join(table_ctx_rows),
+        EVENT_HINTS_MD,
+        EVENT_ASSIGNMENTS_MD,
     ]
 
     messages = [
         {"role": "system", "content": st.session_state.system_prompt},
-        {"role": "user", "content": "".join([b for b in blocks if b])},
+        {"role": "user",   "content": "\n\n".join([b for b in blocks if b])},
     ]
-    # Anexamos também os EVENT_HINTS ao contexto para o LLM ancorar por linha
-    ctx_full = "".join([x for x in ctx_chunks if x]) + "" + EVENT_HINTS_MD
+    ctx_full = "\n\n".join([x for x in ctx_chunks if x])
     push_model(messages, user_text, ctx_full, DIC_MATCHES_MD)
 
 # ========================== Histórico ==========================
