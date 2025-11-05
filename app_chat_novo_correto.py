@@ -1,16 +1,19 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*- v 05/11/2025 18 hs
 """
 app_chat_novo_correto.py — patches WS/Prec/CP + guardrails
 
 Alterações incluídas (sem remover funcionalidades):
 1) Loader robusto de CP (npz/parquet/jsonl) com fallbacks e normalização.
 2) Ajuste do default do "Limiar por evento (dicionários)" para 0.15.
-3) Expander de depuração com Top‑N "brutos" (ignora thresholds) para WS/Precursores/CP.
+3) Expander de depuração com Top-N "brutos" (ignora thresholds) para WS/Precursores/CP.
 4) Injeção explícita das listas calculadas (WS/Precursores/CP) no contexto do LLM e
    guardrails que proíbem o modelo de inventar termos fora dos dicionários.
 
 Todo o restante permanece igual: prompts, uploads, filtros de Description, execução
 somente ao clicar, limpar chat/rascunho/uploads, histórico, etc.
+
+[Patch atual nesta versão]
+- Upload agora aceita: txt, md, csv, pdf, docx, xlsx (com extração de texto para cada tipo).
 """
 
 import os
@@ -344,7 +347,7 @@ def aggregate_dict_matches_over_hits(
         "cp":   _score(E_cp,   L_cp,   thr_cp_sim,   topn_cp),
     }
 
-# ===== Depuração: Top‑N "brutos" (ignora thresholds) =====
+# ===== Depuração: Top-N "brutos" (ignora thresholds) =====
 
 def _topk_raw_for_bank(E_bank: np.ndarray, labels_df: pd.DataFrame, V_desc_T: np.ndarray, topk: int = 10):
     if E_bank is None or labels_df is None or (len(labels_df) != (E_bank.shape[0] if hasattr(E_bank,'shape') else 0)) or V_desc_T is None:
@@ -654,22 +657,113 @@ st.title("SAFETY • CHAT (Somente Sphera)")
 st.text_area("Conteúdo do prompt", key="draft_prompt", height=180, placeholder="Digite ou carregue um modelo de prompt…")
 user_text = st.text_area("Texto de análise (para Sphera)", height=200, placeholder="Cole aqui a descrição/evento a analisar…")
 
-uploaded = st.file_uploader("Anexar arquivo (opcional)", type=["txt","md","csv"])  # upload não dispara
+# ---------- PATCH: aceitar pdf/docx/xlsx além de txt/md/csv ----------
+uploaded = st.file_uploader(
+    "Anexar arquivo (opcional)",
+    type=["txt", "md", "csv", "pdf", "docx", "xlsx"]
+)  # upload não dispara
+
+def extract_pdf_text(file_like: io.BytesIO) -> str:
+    """
+    Extrai texto de PDF. Tenta PyPDF2 -> PyMuPDF (fitz) -> pdfminer.six.
+    Retorna string (pode ser vazia se o PDF for apenas imagem/scaneado).
+    """
+    # 1) PyPDF2
+    try:
+        import PyPDF2
+        file_like.seek(0)
+        reader = PyPDF2.PdfReader(file_like)
+        parts = []
+        for page in reader.pages:
+            parts.append(page.extract_text() or "")
+        return "\n".join(parts).strip()
+    except Exception:
+        pass
+    # 2) PyMuPDF
+    try:
+        import fitz  # PyMuPDF
+        file_like.seek(0)
+        doc = fitz.open(stream=file_like.read(), filetype="pdf")
+        parts = [page.get_text() for page in doc]
+        return "\n".join(parts).strip()
+    except Exception:
+        pass
+    # 3) pdfminer.six
+    try:
+        from pdfminer.high_level import extract_text
+        file_like.seek(0)
+        return (extract_text(file_like) or "").strip()
+    except Exception:
+        pass
+    return ""
+
+def extract_docx_text(file_like: io.BytesIO) -> str:
+    """Extrai texto de um .docx (python-docx)."""
+    try:
+        from docx import Document
+        file_like.seek(0)
+        doc = Document(file_like)
+        parts = [p.text for p in doc.paragraphs if p.text]
+        for table in doc.tables:
+            for row in table.rows:
+                parts.append(" ".join(cell.text for cell in row.cells if cell.text))
+        return "\n".join(parts).strip()
+    except Exception:
+        return ""
+
+def extract_xlsx_text(file_like: io.BytesIO) -> str:
+    """Extrai texto de um .xlsx (pandas + openpyxl)."""
+    try:
+        file_like.seek(0)
+        sheets = pd.read_excel(file_like, sheet_name=None, engine="openpyxl")
+        lines = []
+        for name, df in sheets.items():
+            if df is None or df.empty:
+                continue
+            df = df.astype(str).fillna("")
+            lines.append(f"=== SHEET: {name} ===")
+            lines.extend(df.apply(lambda r: " ".join(r.values), axis=1).tolist())
+        return "\n".join(lines).strip()
+    except Exception:
+        return ""
+
 if uploaded is not None:
     raw = uploaded.read()
-    try:
-        as_text = raw.decode("utf-8", errors="ignore")
-    except Exception:
-        as_text = ""
-    if uploaded.name.lower().endswith(".csv") and as_text:
+    name = uploaded.name.lower()
+    as_text = ""
+
+    if name.endswith(".pdf"):
+        as_text = extract_pdf_text(io.BytesIO(raw))
+    elif name.endswith(".docx"):
+        as_text = extract_docx_text(io.BytesIO(raw))
+    elif name.endswith(".xlsx"):
+        as_text = extract_xlsx_text(io.BytesIO(raw))
+    else:
+        # textos puros e CSV
         try:
-            dfcsv = pd.read_csv(io.StringIO(as_text))
-            as_text = "\n".join(dfcsv.astype(str).fillna("").apply(lambda r: " ".join(r.values), axis=1).tolist())
+            as_text = raw.decode("utf-8", errors="ignore")
         except Exception:
-            pass
+            as_text = ""
+        if name.endswith(".csv") and as_text:
+            try:
+                dfcsv = pd.read_csv(io.StringIO(as_text))
+                as_text = "\n".join(
+                    dfcsv.astype(str).fillna("")
+                    .apply(lambda r: " ".join(r.values), axis=1)
+                    .tolist()
+                )
+            except Exception:
+                pass
+
     if as_text:
         st.success(f"Upload recebido: {uploaded.name} (armazenado no contexto local).")
         st.session_state.upld_texts.append(as_text)
+    else:
+        st.warning(
+            f"Não foi possível extrair texto de {uploaded.name}. "
+            "Se for PDF escaneado (imagem), poderá exigir OCR externo."
+        )
+# ---------- /PATCH upload ----------
 
 col_run1, col_run2, col_run3 = st.columns([1, 1, 1])
 go_btn      = col_run1.button("Enviar para o chat", type="primary", use_container_width=True)
