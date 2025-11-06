@@ -1,13 +1,16 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*- v. 06/11/2025 - 15 hs
 """
-App Chat Novo — v5 killer
+App Chat Novo — v5 killer (com suporte a PDF/DOCX/XLSX no upload)
 
-Foco desta versão:
-- **Filtro Location impecável**: detecção de coluna dinâmica (LOCATION → FPSO → Location → FPSO/Unidade → Unidade) com hidratação multi‑fonte
-  (parquet → npz → excel por chave/índice). Multiselect sempre baseado no **dataframe completo já hidratado**.
-- **Depuração embutida** (expander "Debug Location") quando forem encontradas menos de 2 opções de LOCATION.
-- Mantidas todas funcionalidades anteriores (somente Sphera, dicionários, limiares, prompts, limpar chat/uploads/rascunho, execução só ao clicar,
-  descrição completa, sem duplicações de saída).
+Pontos desta versão:
+- **Uploader** aceita txt, md, csv, pdf, docx, xlsx
+- **Extração de texto**:
+    - TXT/MD/CSV: como antes (CSV -> linhas concatenadas)
+    - PDF: PyPDF2 -> PyMuPDF (fitz) -> pdfminer.six (fallback)
+    - DOCX: python-docx
+    - XLSX: pandas+openpyxl (concatena linhas de todas as planilhas)
+- **Sem OCR** (como solicitado)
+- Demais funcionalidades preservadas (Location, dicionários, prompts, limpeza, thresholds, etc.)
 """
 
 import os, re, io
@@ -57,7 +60,7 @@ def load_npz_embeddings(path: Path) -> Optional[np.ndarray]:
     if not path.exists(): return None
     try:
         with np.load(str(path), allow_pickle=True) as z:
-            for key in ("embeddings","E","X","vectors","vecs"):
+            for key in ("embeddings","E","X","vectors","vecs","arr_0"):
                 if key in z:
                     E = np.array(z[key]).astype(np.float32, copy=False)
                     n = np.linalg.norm(E, axis=1, keepdims=True) + 1e-9
@@ -119,9 +122,6 @@ def hydrate_location(df: pd.DataFrame, npz_path: Path, xlsx_path: Path) -> pd.Da
                 loc_arr=None
                 for k in ("LOCATION","location","locations"):
                     if k in z: loc_arr=z[k]; break
-                if loc_arr is None and "meta" in z:
-                    meta = z["meta"].item() if isinstance(z["meta"], np.ndarray) else z["meta"]
-                    if isinstance(meta, dict): loc_arr = meta.get("LOCATION") or meta.get("location")
                 if loc_arr is not None:
                     loc_arr=np.asarray(loc_arr)
                     if loc_arr.shape[0]==len(d):
@@ -368,19 +368,106 @@ st.title("SAFETY • CHAT")
 st.text_area("Conteúdo do prompt", key="draft_prompt", height=180, placeholder="Digite ou carregue um modelo de prompt…")
 user_text = st.text_area("Texto de análise (para Sphera)", height=200, placeholder="Cole aqui a descrição/evento a analisar…")
 
-uploaded = st.file_uploader("Anexar arquivo (opcional)", type=["txt","md","csv"])  # upload não dispara
+# ---------- Upload (txt, md, csv, pdf, docx, xlsx) ----------
+uploaded = st.file_uploader(
+    "Anexar arquivo (opcional)",
+    type=["txt","md","csv","pdf","docx","xlsx"]
+)  # upload não dispara
+
+def extract_pdf_text(file_like: io.BytesIO) -> str:
+    """Extrai texto de PDF. Tenta PyPDF2 -> PyMuPDF (fitz) -> pdfminer.six; sem OCR."""
+    # 1) PyPDF2
+    try:
+        import PyPDF2
+        file_like.seek(0)
+        reader = PyPDF2.PdfReader(file_like)
+        parts = [(page.extract_text() or "") for page in reader.pages]
+        return "\n".join(parts).strip()
+    except Exception:
+        pass
+    # 2) PyMuPDF
+    try:
+        import fitz  # PyMuPDF
+        file_like.seek(0)
+        doc = fitz.open(stream=file_like.read(), filetype="pdf")
+        parts = [page.get_text() for page in doc]
+        return "\n".join(parts).strip()
+    except Exception:
+        pass
+    # 3) pdfminer.six
+    try:
+        from pdfminer.high_level import extract_text
+        file_like.seek(0)
+        return (extract_text(file_like) or "").strip()
+    except Exception:
+        pass
+    return ""
+
+def extract_docx_text(file_like: io.BytesIO) -> str:
+    """Extrai texto de um .docx (python-docx)."""
+    try:
+        from docx import Document
+        file_like.seek(0)
+        doc = Document(file_like)
+        parts = [p.text for p in doc.paragraphs if p.text]
+        for table in doc.tables:
+            for row in table.rows:
+                parts.append(" ".join(cell.text for cell in row.cells if cell.text))
+        return "\n".join(parts).strip()
+    except Exception:
+        return ""
+
+def extract_xlsx_text(file_like: io.BytesIO) -> str:
+    """Extrai texto de um .xlsx (pandas + openpyxl)."""
+    try:
+        file_like.seek(0)
+        sheets = pd.read_excel(file_like, sheet_name=None, engine="openpyxl")
+        lines = []
+        for name, df in sheets.items():
+            if df is None or df.empty:
+                continue
+            df = df.astype(str).fillna("")
+            lines.append(f"=== SHEET: {name} ===")
+            lines.extend(df.apply(lambda r: " ".join(r.values), axis=1).tolist())
+        return "\n".join(lines).strip()
+    except Exception:
+        return ""
+
 if uploaded is not None:
     raw=uploaded.read()
-    try: as_text = raw.decode("utf-8", errors="ignore")
-    except Exception: as_text=""
-    if uploaded.name.lower().endswith(".csv") and as_text:
-        try:
-            dfcsv=pd.read_csv(io.StringIO(as_text))
-            as_text="\n".join(dfcsv.astype(str).fillna("").apply(lambda r:" ".join(r.values), axis=1).tolist())
-        except Exception: pass
+    name=uploaded.name.lower()
+    as_text = ""
+
+    if name.endswith(".pdf"):
+        as_text = extract_pdf_text(io.BytesIO(raw))
+    elif name.endswith(".docx"):
+        as_text = extract_docx_text(io.BytesIO(raw))
+    elif name.endswith(".xlsx"):
+        as_text = extract_xlsx_text(io.BytesIO(raw))
+    else:
+        # textos puros e CSV
+        try: as_text = raw.decode("utf-8", errors="ignore")
+        except Exception: as_text=""
+        if name.endswith(".csv") and as_text:
+            try:
+                dfcsv=pd.read_csv(io.StringIO(as_text))
+                as_text="\n".join(
+                    dfcsv.astype(str).fillna("")
+                    .apply(lambda r:" ".join(r.values), axis=1)
+                    .tolist()
+                )
+            except Exception:
+                pass
+
     if as_text:
         st.session_state.upld_texts.append(as_text)
         st.success(f"Upload recebido: {uploaded.name} (armazenado no contexto local).")
+    else:
+        st.warning(
+            f"Não foi possível extrair texto de {uploaded.name}. "
+            "Se o PDF for escaneado (imagem), será preciso usar OCR externo."
+        )
+# ---------- /Upload ----------
 
 col_run1,col_run2,col_run3 = st.columns([1,1,1])
 go_btn      = col_run1.button("Enviar para o chat", type="primary", use_container_width=True)
@@ -399,6 +486,9 @@ def render_hits_table(hits: List[Tuple[str,float,pd.Series]]):
     for evid,s,row in hits[:min(10,len(hits))]:
         loc_val = str(row.get(loc_col, row.get("LOCATION","N/D")))
         desc = str(row.get("Description", row.get("DESCRIPTION",""))).strip()
+        # normalização leve
+        desc = desc.replace("\r"," ").replace("\n"," ").replace("_x000D_"," ")
+        desc = re.sub(r"\s+"," ",desc).strip()
         rows.append({"Event ID":evid, "Similaridade":round(s,3), "LOCATION":loc_val, "Description":desc})
     st.markdown("**Eventos do Sphera (Top-10)**")
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
@@ -457,6 +547,8 @@ if go_btn:
         loccol = get_sphera_location_col(row.to_frame().T)
         loc_val = str(row.get(loccol, row.get("LOCATION","N/D"))) if loccol else str(row.get("LOCATION","N/D"))
         desc = str(row.get("Description", row.get("DESCRIPTION",""))).strip()
+        desc = desc.replace("\r"," ").replace("\n"," ").replace("_x000D_"," ")
+        desc = re.sub(r"\s+"," ",desc).strip()
         table_ctx_rows.append(f"EventID={evid} | sim={s:.3f} | LOCATION={loc_val} | Description={desc}")
     ctx_chunks=[f"Sphera_hits={len(hits)}, thr_sph={thr_sph:.2f}, years={years}", "\n".join(table_ctx_rows)]
 
