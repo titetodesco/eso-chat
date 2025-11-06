@@ -215,7 +215,10 @@ def _load_cp_labels() -> Optional[pd.DataFrame]:
         df = df.rename(columns={label_col: "label"})
     return df[["label"]] if "label" in df.columns else None
 
-E_cp = _load_npz_any(CP_NPZ_MAIN) or _load_npz_any(CP_NPZ_ALT)
+E_cp = _load_npz_any(CP_NPZ_MAIN)
+if E_cp is None:
+    E_cp = _load_npz_any(CP_NPZ_ALT)
+
 L_cp = _load_cp_labels()
 
 if E_cp is None or L_cp is None:
