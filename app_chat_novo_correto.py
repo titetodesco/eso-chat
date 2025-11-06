@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*- v. 05/11/2025 - 19 hs
 """
 app_chat_novo_correto.py — Sphera + RAG + DIC (WS/Precursores/CP)
 
