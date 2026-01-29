@@ -366,7 +366,8 @@ def ollama_chat(messages, model=None, temperature=0.2, stream=False, timeout=120
     if not (OLLAMA_HOST and (model or OLLAMA_MODEL)):
         raise RuntimeError("Modelo não configurado. Defina OLLAMA_HOST e OLLAMA_MODEL.")
     import requests
-    r = requests.post(f"{OLLAMA_HOST}/api/chat", headers=HEADERS_JSON, json={
+    #r = requests.post(f"{OLLAMA_HOST}/api/chat", headers=HEADERS_JSON, json={
+    r = requests.post(f"{OLLAMA_HOST}/api", headers=HEADERS_JSON, json={
         "model": model or OLLAMA_MODEL, "messages": messages, "temperature": float(temperature), "stream": bool(stream)
     }, timeout=timeout)
     r.raise_for_status()
