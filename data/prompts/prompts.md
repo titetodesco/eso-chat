@@ -5,7 +5,7 @@
 ### 1) Somente Sphera — similaridade por cosseno
 Atue como um especialista em segurança operacional offshore empregando o texto a seguir, busque eventos semelhantes na base **Sphera** utilizando o cálculo do **cosseno entre o embedding do texto e a coluna Description**.
 Aplique os parâmetros definidos no menu lateral, em especial o limiar de similaridade e os Top-k.
-Apresente para cada evento: **EVENT ID**, **similaridade (cos)**, **Description** e **LOCATION**.
+Apresente para cada evento: **EVENT ID**, **EVENT TYPE**, **similaridade (cos)**, **Description** e **LOCATION**.
 Em seguida, apresente recomendações para investigação e lições aprendidas de eventos semelhantes.
 
 ### 2) Sphera + GoSee + Docs + Upload
